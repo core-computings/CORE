@@ -28,15 +28,15 @@ class ComputeGaussianBlur : public VulkanCompute {
 
  private:
   VulkanBuffer uniform_buffer_;
+#if !defined(__ANDROID__)
+  std::array<float, 9> gaussian_kernel_data_ = {0.0625f, 0.125f, 0.0625f, 0.125f, 0.25f,
+                                              0.125f, 0.0625f, 0.125f, 0.0625f};
+  VulkanBuffer gaussian_kernel_;
+#endif
   struct UniformData {
     int width;
     int height;
   } uniform_data_;
-
-  std::array<float, 9> gaussian_kernel_data_ = {0.0625f, 0.125f,  0.0625f, 0.125f, 0.25f,
-                                                0.125f,  0.0625f, 0.125f,  0.0625f};
-
-  VulkanBuffer gaussian_kernel_;
 };
 
 }  // namespace vulkan
