@@ -39,3 +39,12 @@ target_link_libraries(vulkan_tests
 
 add_executable(vulkan_transfer_benchmark benchmarks/BufferTransferBenchmark.cpp)
 target_link_libraries(vulkan_transfer_benchmark PRIVATE vulkan)
+
+add_executable(vulkan_gaussian_benchmark
+  benchmarks/GaussianBlurBenchmark.cpp
+  ComputeGaussianBlur/ComputeGaussianBlur.cpp)
+target_include_directories(vulkan_gaussian_benchmark PRIVATE
+  ComputeGaussianBlur
+  ${CMAKE_CURRENT_BINARY_DIR}/shaders)
+add_dependencies(vulkan_gaussian_benchmark vulkan_shaders)
+target_link_libraries(vulkan_gaussian_benchmark PRIVATE mat vulkan)
