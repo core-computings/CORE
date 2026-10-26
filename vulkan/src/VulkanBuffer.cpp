@@ -85,6 +85,27 @@ void VulkanBuffer::CopyBuffers(std::span<const BatchBufferCopy> copies) {
     return;
   }
 
+  if (copies.front().source == nullptr || copies.front().source->context_ == nullptr) {
+    throw std::invalid_argument("Buffer copy requires a live source");
+  }
+  VulkanContext* context = copies.front().source->context_;
+  const VulkanCommandBuffer command_buffer = VulkanCommandBuffer::BeginOneTimeCommands(context);
+  CopyBuffers(command_buffer.buffer(), copies);
+  VulkanFence fence(context);
+  fence.Reset();
+  command_buffer.Submit(fence.fence);
+  VK_CHECK(vkWaitForFences(context->logical_device, 1, &fence.fence, VK_TRUE, UINT64_MAX));
+}
+
+void VulkanBuffer::CopyBuffers(VkCommandBuffer command_buffer,
+                              std::span<const BatchBufferCopy> copies) {
+  if (copies.empty()) {
+    return;
+  }
+  if (command_buffer == VK_NULL_HANDLE) {
+    throw std::invalid_argument("Buffer copy requires a command buffer");
+  }
+
   VulkanContext* context = nullptr;
   std::vector<VkBufferCopy> regions;
   regions.reserve(copies.size());
@@ -128,14 +149,13 @@ void VulkanBuffer::CopyBuffers(std::span<const BatchBufferCopy> copies) {
     });
   }
 
-  const VulkanCommandBuffer command_buffer = VulkanCommandBuffer::BeginOneTimeCommands(context);
   const VkMemoryBarrier before{
       .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
       .pNext = nullptr,
       .srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT,
       .dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT,
   };
-  vkCmdPipelineBarrier(command_buffer.buffer(), VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+  vkCmdPipelineBarrier(command_buffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
                        VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &before, 0, nullptr, 0, nullptr);
 
   const VkMemoryBarrier between{
@@ -147,10 +167,10 @@ void VulkanBuffer::CopyBuffers(std::span<const BatchBufferCopy> copies) {
   for (size_t index = 0; index < copies.size(); ++index) {
     if (index != 0) {
       // Preserve array order, including read-after-write and overlapping writes.
-      vkCmdPipelineBarrier(command_buffer.buffer(), VK_PIPELINE_STAGE_TRANSFER_BIT,
+      vkCmdPipelineBarrier(command_buffer, VK_PIPELINE_STAGE_TRANSFER_BIT,
                            VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &between, 0, nullptr, 0, nullptr);
     }
-    vkCmdCopyBuffer(command_buffer.buffer(), copies[index].source->buffer,
+    vkCmdCopyBuffer(command_buffer, copies[index].source->buffer,
                     copies[index].destination->buffer, 1, &regions[index]);
   }
 
@@ -161,14 +181,9 @@ void VulkanBuffer::CopyBuffers(std::span<const BatchBufferCopy> copies) {
       .dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT |
                        VK_ACCESS_HOST_READ_BIT,
   };
-  vkCmdPipelineBarrier(command_buffer.buffer(), VK_PIPELINE_STAGE_TRANSFER_BIT,
+  vkCmdPipelineBarrier(command_buffer, VK_PIPELINE_STAGE_TRANSFER_BIT,
                        VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, 0, 1,
                        &after, 0, nullptr, 0, nullptr);
-
-  VulkanFence fence(context);
-  fence.Reset();
-  command_buffer.Submit(fence.fence);
-  VK_CHECK(vkWaitForFences(context->logical_device, 1, &fence.fence, VK_TRUE, UINT64_MAX));
 }
 
 void VulkanBuffer::CopyToImage(VulkanImage& dst_image, const uint32_t width, const uint32_t height,
