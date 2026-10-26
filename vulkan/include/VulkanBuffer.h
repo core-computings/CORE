@@ -42,6 +42,9 @@ class VulkanBuffer {
   // Access to the context's queue must be externally synchronized.
   static void CopyBuffers(std::span<const BatchBufferCopy> copies);
 
+  static void CopyBuffers(VkCommandBuffer command_buffer,
+                         std::span<const BatchBufferCopy> copies);
+
   void CopyToImage(VulkanImage& dst_image, const uint32_t width, const uint32_t height,
                    const uint32_t layers = 1);
 
