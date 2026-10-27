@@ -24,7 +24,7 @@ TEST(ComputeSum, test) {
   context.Init();
   core::vulkan::VulkanCommandBuffer command_buffer(&context);
   core::vulkan::VulkanFence fence(&context);
-  core::vulkan::VulkanQueryPool query_pool(&context, VK_QUERY_TYPE_TIMESTAMP);
+  core::vulkan::VulkanQueryPool query_pool(&context, VK_QUERY_TYPE_TIMESTAMP, 4);
   core::Mat<int, 1> mat(6000, 6000);
   mat.Fill(3);
   core::Timer t;
@@ -63,6 +63,8 @@ TEST(ComputeSum, test) {
   fence.Reset();
 
   command_buffer.BeginCommandBufferWithReset();
+  query_pool.Reset(command_buffer.buffer());
+  query_pool.Query(command_buffer.buffer(), 0, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT);
   const std::array<core::vulkan::BatchBufferCopy, 2> uploads = {
       core::vulkan::BatchBufferCopy{.source = &input_buffer,
                                   .destination = &device_input,
@@ -75,10 +77,9 @@ TEST(ComputeSum, test) {
                                   .destination_offset = 0,
                                   .size = VK_WHOLE_SIZE}};
   core::vulkan::VulkanBuffer::CopyBuffers(command_buffer.buffer(), uploads);
-  query_pool.Reset(command_buffer.buffer());
-  query_pool.Query(command_buffer.buffer(), 0, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT);
+  query_pool.Query(command_buffer.buffer(), 1);
   compute_sum->Run(command_buffer.buffer());
-  query_pool.Query(command_buffer.buffer(), 1, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT);
+  query_pool.Query(command_buffer.buffer(), 2);
   const core::vulkan::BatchBufferCopy download{
       .source = &sum_buffer,
       .destination = &result_buffer,
@@ -86,6 +87,7 @@ TEST(ComputeSum, test) {
       .destination_offset = 0,
       .size = VK_WHOLE_SIZE};
   core::vulkan::VulkanBuffer::CopyBuffers(command_buffer.buffer(), std::span(&download, 1));
+  query_pool.Query(command_buffer.buffer(), 3);
   VkSubmitInfo submit_info{};
   command_buffer.Submit(fence.fence, submit_info);
 
@@ -98,9 +100,16 @@ TEST(ComputeSum, test) {
   printf("GPU Result: %d\n", result);
 
   query_pool.GetQueryResults();
-  const auto timestamps = query_pool.GetTimeStamps();
-  const auto runtime_ms = (timestamps[1] - timestamps[0]) * (context.timestamp_period / 1000000.0);
-  printf("GPU time: %fms\n", runtime_ms);
+  const double upload_ms = query_pool.GetElapsedMilliseconds(0, 1);
+  const double compute_ms = query_pool.GetElapsedMilliseconds(1, 2);
+  const double download_ms = query_pool.GetElapsedMilliseconds(2, 3);
+  const double total_ms = query_pool.GetElapsedMilliseconds(0, 3);
+  printf("GPU upload/compute/download/total: %f/%f/%f/%fms\n", upload_ms, compute_ms,
+         download_ms, total_ms);
+  EXPECT_GE(upload_ms, 0.0);
+  EXPECT_GT(compute_ms, 0.0);
+  EXPECT_GE(download_ms, 0.0);
+  EXPECT_NEAR(upload_ms + compute_ms + download_ms, total_ms, 1e-6);
 
   int cpu_sum = 0;
   t.start();
