@@ -48,3 +48,6 @@ target_include_directories(vulkan_gaussian_benchmark PRIVATE
   ${CMAKE_CURRENT_BINARY_DIR}/shaders)
 add_dependencies(vulkan_gaussian_benchmark vulkan_shaders)
 target_link_libraries(vulkan_gaussian_benchmark PRIVATE mat vulkan)
+
+add_executable(vulkan_mapping_benchmark benchmarks/BufferMappingBenchmark.cpp)
+target_link_libraries(vulkan_mapping_benchmark PRIVATE vulkan)

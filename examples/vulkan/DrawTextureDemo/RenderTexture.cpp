@@ -24,7 +24,7 @@ void RenderTexture::Init() {
   index_buffer_staging_.MapData(
       [this](void* data) { memcpy(data, indices_.data(), sizeof(indices_[0]) * indices_.size()); });
 
-  uniform_buffer_.MapData([this](void* data) {
+  uniform_buffer_.MapDataPersistent([this](void* data) {
     uniform_data_.model = glm::mat4(1.0f);
     uniform_data_.view = glm::mat4(1.0f);
     uniform_data_.project = glm::mat4(1.0f);
@@ -148,8 +148,7 @@ void RenderTexture::UpdateUniformBuffer(const int width, const int height) {
       std::chrono::duration<float, std::chrono::seconds::period>(current_time - start_time_)
           .count();
 
-  // TODO: maintain a persistent mapping pointer to avoid mapping every time
-  uniform_buffer_.MapData([this, time, width, height](void* data) {
+  uniform_buffer_.MapDataPersistent([this, time, width, height](void* data) {
     uniform_data_.model =
         glm::rotate(glm::mat4(1.0f), time * glm::radians(-90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
     uniform_data_.view = glm::lookAt(glm::vec3(1.0f, 1.0f, 1.0f), glm::vec3(0.0f, 0.0f, 0.0f),
