@@ -34,6 +34,9 @@ VulkanBuffer::VulkanBuffer(VulkanContext* context, const VkDeviceSize size,
 }
 
 VulkanBuffer::~VulkanBuffer() {
+  if (mapped_data_ != nullptr) {
+    vkUnmapMemory(context_->logical_device, buffer_memory_);
+  }
   if (context_ && buffer != VK_NULL_HANDLE) {
     vkDestroyBuffer(context_->logical_device, buffer, nullptr);
   }
@@ -47,6 +50,9 @@ VulkanBuffer& VulkanBuffer::operator=(VulkanBuffer&& rhs) {
     return *this;
   }
 
+  if (mapped_data_ != nullptr) {
+    vkUnmapMemory(context_->logical_device, buffer_memory_);
+  }
   if (context_ && buffer != VK_NULL_HANDLE) {
     vkDestroyBuffer(context_->logical_device, buffer, nullptr);
   }
@@ -60,6 +66,9 @@ VulkanBuffer& VulkanBuffer::operator=(VulkanBuffer&& rhs) {
 
   buffer_memory_ = rhs.buffer_memory_;
   rhs.buffer_memory_ = VK_NULL_HANDLE;
+
+  mapped_data_ = rhs.mapped_data_;
+  rhs.mapped_data_ = nullptr;
 
   buffer_size_ = rhs.buffer_size_;
   memory_properties_ = rhs.memory_properties_;
@@ -220,15 +229,34 @@ void VulkanBuffer::CopyToImage(VkCommandBuffer command_buffer, VulkanImage& dst_
 }
 
 void VulkanBuffer::MapData(const std::function<void(void*)>& func) {
-  const auto staging_buffer_property =
+  struct MappingReset {
+    VulkanBuffer& owner;
+    ~MappingReset() {
+      if (owner.mapped_data_ != nullptr) {
+        vkUnmapMemory(owner.context_->logical_device, owner.buffer_memory_);
+        owner.mapped_data_ = nullptr;
+      }
+    }
+  };
+  const MappingReset reset{.owner = *this};
+  MapDataPersistent(func);
+}
+
+void VulkanBuffer::MapDataPersistent(const std::function<void(void*)>& func) {
+  if (context_ == nullptr || buffer_memory_ == VK_NULL_HANDLE) {
+    throw std::runtime_error("Buffer is not initialized");
+  }
+  constexpr VkMemoryPropertyFlags kMappableProperties =
       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
-  if ((memory_properties_ & staging_buffer_property) != staging_buffer_property) {
+  if ((memory_properties_ & kMappableProperties) != kMappableProperties) {
     throw std::runtime_error("Buffer is not mappable");
   }
-  void* data;
-  vkMapMemory(context_->logical_device, buffer_memory_, 0, buffer_size_, 0, &data);
-  func(data);
-  vkUnmapMemory(context_->logical_device, buffer_memory_);
+  if (mapped_data_ == nullptr) {
+    void* data = nullptr;
+    VK_CHECK(vkMapMemory(context_->logical_device, buffer_memory_, 0, buffer_size_, 0, &data));
+    mapped_data_ = data;
+  }
+  func(mapped_data_);
 }
 
 }  // namespace vulkan

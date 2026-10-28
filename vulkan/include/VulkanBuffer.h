@@ -53,6 +53,8 @@ class VulkanBuffer {
 
   void MapData(const std::function<void(void*)>& func);
 
+  void MapDataPersistent(const std::function<void(void*)>& func);
+
   VkDeviceSize Size() const { return buffer_size_; }
 
   VkBuffer buffer = VK_NULL_HANDLE;
@@ -64,6 +66,7 @@ class VulkanBuffer {
   VkMemoryPropertyFlags memory_properties_ = 0;
   VkBufferUsageFlags usage_ = 0;
   VkDeviceMemory buffer_memory_ = VK_NULL_HANDLE;
+  void* mapped_data_ = nullptr;
 };
 
 }  // namespace vulkan
