@@ -46,6 +46,8 @@ class VulkanImage {
   uint32_t mip_levels_ = 1;
   uint32_t array_layers_ = 1;
   VkSampleCountFlagBits samples_ = VK_SAMPLE_COUNT_1_BIT;
+  VkImageTiling tiling_ = VK_IMAGE_TILING_OPTIMAL;
+  VkImageUsageFlags usage_ = 0;
 
  public:
   uint32_t image_width;
