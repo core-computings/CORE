@@ -1,5 +1,7 @@
 #include "VulkanImage.h"
 
+#include <stdexcept>
+
 #include "VulkanBuffer.h"
 
 namespace core {
@@ -16,6 +18,8 @@ VulkanImage::VulkanImage(VulkanContext* context, const uint32_t width, const uin
       mip_levels_(mip_levels),
       array_layers_(layers),
       samples_(samples),
+      tiling_(tiling),
+      usage_(usage),
       image_width(width),
       image_height(height) {
   VkImageCreateInfo image_info{};
@@ -107,6 +111,9 @@ VulkanImage& VulkanImage::operator=(VulkanImage&& rhs) {
   image_format_ = rhs.image_format_;
   mip_levels_ = rhs.mip_levels_;
   array_layers_ = rhs.array_layers_;
+  samples_ = rhs.samples_;
+  tiling_ = rhs.tiling_;
+  usage_ = rhs.usage_;
 
   image = rhs.image;
   rhs.image = VK_NULL_HANDLE;
@@ -258,13 +265,26 @@ void VulkanImage::GenerateMipmaps() {
 }
 
 void VulkanImage::GenerateMipmaps(VkCommandBuffer command_buffer) {
-  // Check if image format supports linear blitting
-  // VkFormatProperties format_properties;
-  // vkGetPhysicalDeviceFormatProperties(context_->physical_device, image_format_,
-  // &format_properties); if (!(format_properties.optimalTilingFeatures &
-  //       VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT)) {
-  //   throw std::runtime_error("texture image format does not support linear blitting!");
-  // }
+  if (command_buffer == VK_NULL_HANDLE || image == VK_NULL_HANDLE ||
+      samples_ != VK_SAMPLE_COUNT_1_BIT || (usage_ & VK_IMAGE_USAGE_TRANSFER_DST_BIT) == 0) {
+    throw std::invalid_argument("mipmap generation requires a valid single-sample transfer image");
+  }
+  if (mip_levels_ > 1) {
+    if ((usage_ & VK_IMAGE_USAGE_TRANSFER_SRC_BIT) == 0) {
+      throw std::invalid_argument("mipmap generation requires transfer source usage");
+    }
+    VkFormatProperties properties{};
+    vkGetPhysicalDeviceFormatProperties(context_->physical_device, image_format_, &properties);
+    const VkFormatFeatureFlags features = tiling_ == VK_IMAGE_TILING_LINEAR
+                                             ? properties.linearTilingFeatures
+                                             : properties.optimalTilingFeatures;
+    constexpr VkFormatFeatureFlags kRequired =
+        VK_FORMAT_FEATURE_BLIT_SRC_BIT | VK_FORMAT_FEATURE_BLIT_DST_BIT |
+        VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT;
+    if ((features & kRequired) != kRequired) {
+      throw std::invalid_argument("image format does not support linear mipmap blits");
+    }
+  }
 
   VkImageMemoryBarrier barrier{};
   barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
@@ -273,7 +293,7 @@ void VulkanImage::GenerateMipmaps(VkCommandBuffer command_buffer) {
   barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
   barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
   barrier.subresourceRange.baseArrayLayer = 0;
-  barrier.subresourceRange.layerCount = 1;
+  barrier.subresourceRange.layerCount = array_layers_;
   barrier.subresourceRange.levelCount = 1;
 
   int32_t mip_width = static_cast<int32_t>(image_width);
@@ -296,7 +316,7 @@ void VulkanImage::GenerateMipmaps(VkCommandBuffer command_buffer) {
     blit.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     blit.srcSubresource.mipLevel = i - 1;
     blit.srcSubresource.baseArrayLayer = 0;
-    blit.srcSubresource.layerCount = 1;
+    blit.srcSubresource.layerCount = array_layers_;
     // dst
     blit.dstOffsets[0] = {.x = 0, .y = 0, .z = 0};
     blit.dstOffsets[1] = {.x = mip_width > 1 ? mip_width / 2 : 1,
@@ -305,7 +325,7 @@ void VulkanImage::GenerateMipmaps(VkCommandBuffer command_buffer) {
     blit.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     blit.dstSubresource.mipLevel = i;
     blit.dstSubresource.baseArrayLayer = 0;
-    blit.dstSubresource.layerCount = 1;
+    blit.dstSubresource.layerCount = array_layers_;
 
     vkCmdBlitImage(command_buffer, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, image,
                    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_LINEAR);
