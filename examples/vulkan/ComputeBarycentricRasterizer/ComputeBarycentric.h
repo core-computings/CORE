@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <iostream>
 
 #include "VulkanBuffer.h"
@@ -11,6 +12,11 @@ namespace example {
 
 class ComputeBarycentric : public core::vulkan::VulkanCompute {
  public:
+  struct WorkgroupSize {
+    uint32_t x = 16;
+    uint32_t y = 16;
+  };
+
   struct Triangle {
     glm::ivec2 a;
     glm::ivec2 b;
@@ -18,6 +24,8 @@ class ComputeBarycentric : public core::vulkan::VulkanCompute {
   };
 
   ComputeBarycentric(core::vulkan::VulkanContext* context, const int width, const int height);
+  ComputeBarycentric(core::vulkan::VulkanContext* context, int width,
+                     int height, WorkgroupSize workgroup_size);
 
   void Init() override;
   void Run(const VkCommandBuffer command_buffer);
@@ -28,6 +36,7 @@ class ComputeBarycentric : public core::vulkan::VulkanCompute {
  protected:
   std::vector<core::vulkan::BindingInfo> GetBindingInfo() const override;
   std::vector<VkPushConstantRange> GetPushConstantRanges() const override;
+  core::vulkan::ComputeSpecialization GetSpecialization() const override;
   const std::vector<uint32_t>& LoadShaderCode() const override;
 
  private:
@@ -44,6 +53,7 @@ class ComputeBarycentric : public core::vulkan::VulkanCompute {
 
   int width_;
   int height_;
+  WorkgroupSize workgroup_size_;
 };
 }  // namespace example
 }  // namespace core
