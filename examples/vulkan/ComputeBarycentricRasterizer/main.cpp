@@ -4,6 +4,11 @@
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include <stb_image_write.h>
 
+#include <charconv>
+#include <cstdint>
+#include <cstring>
+#include <stdexcept>
+
 #include "ComputeBarycentric.h"
 #include "Mat.h"
 #include "VulkanBuffer.h"
@@ -17,7 +22,25 @@
 const int kWidth = 1000;
 const int kHeight = 1000;
 
-int main() {
+int main(int argc, char* argv[]) {
+  core::example::ComputeBarycentric::WorkgroupSize workgroup{};
+  if (argc != 1 && argc != 3) {
+    throw std::invalid_argument(
+        "Usage: vk_rasterize_demo [workgroup_x workgroup_y]");
+  }
+  if (argc == 3) {
+    uint32_t* dimensions[] = {&workgroup.x, &workgroup.y};
+    for (int index = 0; index < 2; ++index) {
+      const char* begin = argv[index + 1];
+      const char* end = begin + std::strlen(begin);
+      const std::from_chars_result result =
+          std::from_chars(begin, end, *dimensions[index]);
+      if (result.ec != std::errc{} || result.ptr != end) {
+        throw std::invalid_argument(
+            "Workgroup dimensions must be unsigned integers");
+      }
+    }
+  }
   // Setup Vulkan
   core::vulkan::QueueFamilyType queue_family_type = core::vulkan::QueueFamilyType::Compute;
   core::vulkan::VulkanContext context(true, queue_family_type, nullptr);
@@ -27,7 +50,8 @@ int main() {
   core::vulkan::VulkanQueryPool query_pool(&context, VK_QUERY_TYPE_TIMESTAMP);
 
   std::unique_ptr<core::example::ComputeBarycentric> barycentric =
-      std::make_unique<core::example::ComputeBarycentric>(&context, kWidth, kHeight);
+      std::make_unique<core::example::ComputeBarycentric>(&context, kWidth,
+                                                          kHeight, workgroup);
   barycentric->Init();
 
   fence.Reset();

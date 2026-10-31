@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <vector>
 
 #include "VulkanBase.h"
@@ -10,6 +11,11 @@
 namespace core {
 namespace vulkan {
 
+struct ComputeSpecialization {
+  std::vector<VkSpecializationMapEntry> entries;
+  std::vector<std::byte> data;
+};
+
 class VulkanCompute : public VulkanBase {
  public:
   explicit VulkanCompute(VulkanContext* context);
@@ -18,6 +24,7 @@ class VulkanCompute : public VulkanBase {
 
  protected:
   void CreatePipeline() override;
+  virtual ComputeSpecialization GetSpecialization() const;
 
   // Derived pipelines need to implement this if pipeline cache is used
   virtual const std::string GetPipelineCache() const;
