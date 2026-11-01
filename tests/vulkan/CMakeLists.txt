@@ -48,3 +48,12 @@ target_include_directories(vulkan_gaussian_benchmark PRIVATE
   ${CMAKE_CURRENT_BINARY_DIR}/shaders)
 add_dependencies(vulkan_gaussian_benchmark vulkan_shaders)
 target_link_libraries(vulkan_gaussian_benchmark PRIVATE mat vulkan)
+
+add_executable(vulkan_sum_benchmark
+  benchmarks/SumBenchmark.cpp
+  ComputeSum/ComputeSum.cpp)
+target_include_directories(vulkan_sum_benchmark PRIVATE
+  ComputeSum
+  ${CMAKE_CURRENT_BINARY_DIR}/shaders)
+add_dependencies(vulkan_sum_benchmark vulkan_shaders)
+target_link_libraries(vulkan_sum_benchmark PRIVATE mat vulkan)

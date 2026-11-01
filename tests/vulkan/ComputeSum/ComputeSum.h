@@ -25,6 +25,7 @@ class ComputeSum : public VulkanCompute {
   const std::vector<uint32_t>& LoadShaderCode() const override;
 
  private:
+  static constexpr uint32_t kSmallInputLimit = 262144;
   VulkanBuffer uniform_buffer_;
   struct UniformData {
     int width;

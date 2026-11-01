@@ -14,19 +14,21 @@ layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
 shared int wgCounter;
 
 void main() {
-    if (gl_LocalInvocationIndex == 0u) wgCounter = int(0);
-    barrier(); // synchronize shared memory initialization
-    
+    if (gl_LocalInvocationIndex == 0u) {
+        wgCounter = 0;
+    }
+    barrier();
+
     ivec2 gid = ivec2(gl_GlobalInvocationID.xy);
     const int row = gid.y;
     const int col = gid.x;
-    if (row >= ubo.height || col >= ubo.width) return;
-
-    int val = src[row * ubo.width + col];
+    int val = 0;
+    if (row < ubo.height && col < ubo.width) {
+        val = src[row * ubo.width + col];
+    }
     atomicAdd(wgCounter, val);
     barrier();
 
-    // One lane publishes to global
     if (gl_LocalInvocationIndex == 0u) {
         atomicAdd(dst, wgCounter);
     }
