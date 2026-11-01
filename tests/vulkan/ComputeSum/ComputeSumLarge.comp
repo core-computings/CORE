@@ -1,0 +1,38 @@
+#version 450
+
+layout(binding = 0) uniform UniformBufferObject {
+    int width;
+    int height;
+}
+ubo;
+
+layout(std430, binding = 1) readonly buffer src_in { int src[]; };
+layout(std430, binding = 2) buffer dst_out { int dst; };
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+shared int partial[256];
+
+void main() {
+    const uint lane = gl_LocalInvocationIndex;
+    const uint count = uint(ubo.width) * uint(ubo.height);
+    const uint begin = gl_WorkGroupID.x * 4096u + lane;
+    int sum = 0;
+    for (uint item = 0u; item < 16u; ++item) {
+        const uint index = begin + item * 256u;
+        if (index < count) {
+            sum += src[index];
+        }
+    }
+    partial[lane] = sum;
+    barrier();
+    for (uint stride = 128u; stride > 0u; stride >>= 1u) {
+        if (lane < stride) {
+            partial[lane] += partial[lane + stride];
+        }
+        barrier();
+    }
+    if (lane == 0u) {
+        atomicAdd(dst, partial[0]);
+    }
+}

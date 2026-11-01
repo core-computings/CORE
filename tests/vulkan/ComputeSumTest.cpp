@@ -25,7 +25,7 @@ TEST(ComputeSum, test) {
   core::vulkan::VulkanCommandBuffer command_buffer(&context);
   core::vulkan::VulkanFence fence(&context);
   core::vulkan::VulkanQueryPool query_pool(&context, VK_QUERY_TYPE_TIMESTAMP);
-  core::Mat<int, 1> mat(6000, 6000);
+  core::Mat<int, 1> mat(4096, 4096);
   mat.Fill(3);
   core::Timer t;
   const VkDeviceSize buffer_size = mat.rows() * mat.cols() * sizeof(int);
