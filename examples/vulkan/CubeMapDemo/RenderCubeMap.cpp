@@ -1,5 +1,7 @@
 #include "RenderCubeMap.h"
 
+#include <bit>
+
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
 
@@ -153,6 +155,8 @@ void RenderCubeMap::CreateTextureImage(const std::string& image_path) {
   printf("Processed cube map image: width=%d, height=%d, channels=%d\n", out.width, out.height,
          out.depth);
 
+  const uint32_t face_size = static_cast<uint32_t>(out.width);
+  const uint32_t mip_levels = std::bit_width(face_size);
   VkDeviceSize image_size = out.width * out.height * out.depth;
 
   core::vulkan::VulkanBuffer staging_buffer(
@@ -170,21 +174,17 @@ void RenderCubeMap::CreateTextureImage(const std::string& image_path) {
                                 VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
                                     VK_IMAGE_USAGE_SAMPLED_BIT,
                                 VK_IMAGE_ASPECT_COLOR_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-                                VK_IMAGE_TILING_OPTIMAL, 1, VK_SAMPLE_COUNT_1_BIT,
-                                VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT,  // cube map flag
-                                6                                     // layers
-      );
+                                VK_IMAGE_TILING_OPTIMAL, mip_levels, VK_SAMPLE_COUNT_1_BIT,
+                                VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT, 6);
 
   const vulkan::VulkanCommandBuffer upload =
       vulkan::VulkanCommandBuffer::BeginOneTimeCommands(context_);
   cube_map_image_.TransitionImageLayout(upload.buffer(), VK_IMAGE_LAYOUT_UNDEFINED,
                                         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                                        VK_FORMAT_R8G8B8A8_SRGB, 1, 6);
+                                        VK_FORMAT_R8G8B8A8_SRGB, mip_levels, 6);
   staging_buffer.CopyToImage(upload.buffer(), cube_map_image_, static_cast<uint32_t>(out.width),
                              static_cast<uint32_t>(out.height), 6);
-  cube_map_image_.TransitionImageLayout(upload.buffer(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                                        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                                        VK_FORMAT_R8G8B8A8_SRGB, 1, 6);
+  cube_map_image_.GenerateMipmaps(upload.buffer());
   upload.EndOneTimeCommands();
 }
 

@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <cstring>
 #include <stdexcept>
+#include <utility>
 #include <vector>
 
 #include "VulkanBuffer.h"
@@ -165,6 +166,72 @@ class VulkanImageRecordingTest : public testing::Test {
     EXPECT_EQ(recorded, synchronous);
   }
 
+  void ExpectLayerMipmaps(uint32_t width, uint32_t height, uint32_t layers,
+                         VkFormat format, bool checker) {
+    uint32_t levels = 1;
+    for (uint32_t size = std::max(width, height); size > 1; size /= 2) {
+      ++levels;
+    }
+    const size_t face_pixels = static_cast<size_t>(width) * height;
+    std::vector<uint32_t> input(face_pixels * layers);
+    for (uint32_t layer = 0; layer < layers; ++layer) {
+      for (uint32_t y = 0; y < height; ++y) {
+        for (uint32_t x = 0; x < width; ++x) {
+          const uint32_t red = checker ? ((x + y) % 2) * 255U : layer * 31U;
+          input[face_pixels * layer + static_cast<size_t>(y) * width + x] =
+              0xff000000U | ((255U - layer * 31U) << 16) | ((layer * 31U) << 8) | red;
+        }
+      }
+    }
+    vulkan::VulkanBuffer source(&context_, input.size() * sizeof(uint32_t),
+                                VK_BUFFER_USAGE_TRANSFER_SRC_BIT, kHostMemory);
+    source.MapData([&](void* data) { std::memcpy(data, input.data(), source.Size()); });
+    vulkan::VulkanImage image;
+    image = vulkan::VulkanImage(
+        &context_, width, height, format,
+        VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+            VK_IMAGE_USAGE_SAMPLED_BIT,
+        VK_IMAGE_ASPECT_COLOR_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+        VK_IMAGE_TILING_OPTIMAL, levels, VK_SAMPLE_COUNT_1_BIT,
+        layers == 6 ? VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT : 0, layers);
+    vulkan::VulkanCommandBuffer command(&context_);
+    for (uint32_t round = 0; round < 2; ++round) {
+      command.BeginCommandBufferWithReset();
+      image.TransitionImageLayout(command.buffer(), VK_IMAGE_LAYOUT_UNDEFINED,
+                                  VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, format, levels, layers);
+      source.CopyToImage(command.buffer(), image, width, height, layers);
+      image.GenerateMipmaps(command.buffer());
+      SubmitAndWait(command);
+      const std::vector<uint32_t> result = ReadImage(image, levels, layers);
+      ASSERT_GE(result.size(), input.size());
+      EXPECT_TRUE(std::equal(input.begin(), input.end(), result.begin()));
+      size_t offset = input.size();
+      uint32_t mip_width = width;
+      uint32_t mip_height = height;
+      for (uint32_t level = 1; level < levels; ++level) {
+        mip_width = std::max(mip_width / 2, 1U);
+        mip_height = std::max(mip_height / 2, 1U);
+        for (uint32_t layer = 0; layer < layers; ++layer) {
+          const uint32_t red = checker ? (format == VK_FORMAT_R8G8B8A8_SRGB ? 188U : 128U)
+                                       : layer * 31U;
+          const uint32_t expected = 0xff000000U | ((255U - layer * 31U) << 16) |
+                                    ((layer * 31U) << 8) | red;
+          for (size_t pixel = 0; pixel < static_cast<size_t>(mip_width) * mip_height; ++pixel) {
+            ASSERT_LT(offset, result.size());
+            for (uint32_t shift : {0U, 8U, 16U, 24U}) {
+              const int actual_channel = static_cast<int>((result[offset] >> shift) & 255U);
+              const int expected_channel = static_cast<int>((expected >> shift) & 255U);
+              ASSERT_NEAR(actual_channel, expected_channel, 2)
+                  << "level=" << level << " layer=" << layer << " pixel=" << pixel;
+            }
+            ++offset;
+          }
+        }
+      }
+      EXPECT_EQ(offset, result.size());
+    }
+  }
+
   vulkan::VulkanContext context_{true, vulkan::QueueFamilyType::Compute, VK_NULL_HANDLE};
 };
 
@@ -179,6 +246,7 @@ TEST_F(VulkanImageRecordingTest, MatchesEveryMipIncludingOddAndOneDimensionalIma
   ExpectCompatible(7, 3, 1, 3);
   ExpectCompatible(1, 8, 1, 4, true);
   ExpectCompatible(1, 1, 1, 1, true);
+  ExpectCompatible(4, 4, 6, 3, true);
 }
 
 TEST_F(VulkanImageRecordingTest, DefersMultipleUploadsAndAllowsCommandBufferReuse) {
@@ -206,6 +274,41 @@ TEST_F(VulkanImageRecordingTest, DefersMultipleUploadsAndAllowsCommandBufferReus
     EXPECT_EQ(ReadImage(first, 1, 1), std::vector<uint32_t>(16, value));
     EXPECT_EQ(ReadImage(second, 1, 1), std::vector<uint32_t>(16, value));
   }
+}
+
+TEST_F(VulkanImageRecordingTest, GeneratesEveryCubeFaceWithLinearAndSrgbFiltering) {
+  ExpectLayerMipmaps(8, 8, 6, kFormat, true);
+  ExpectLayerMipmaps(8, 8, 6, VK_FORMAT_R8G8B8A8_SRGB, true);
+}
+
+TEST_F(VulkanImageRecordingTest, HandlesOddCubeFacesSingleLevelAndNonCubeArrays) {
+  ExpectLayerMipmaps(7, 7, 6, VK_FORMAT_R8G8B8A8_SRGB, false);
+  ExpectLayerMipmaps(1, 1, 6, kFormat, false);
+  ExpectLayerMipmaps(1, 8, 3, kFormat, false);
+}
+
+TEST_F(VulkanImageRecordingTest, RejectsUnsupportedMipmapsBeforeRecordingAndPreservesMoveState) {
+  vulkan::VulkanCommandBuffer command(&context_);
+  command.BeginCommandBuffer();
+  vulkan::VulkanImage empty;
+  EXPECT_THROW(empty.GenerateMipmaps(command.buffer()), std::invalid_argument);
+  vulkan::VulkanImage integer_image(
+      &context_, 4, 4, VK_FORMAT_R8G8B8A8_UINT,
+      VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+          VK_IMAGE_USAGE_SAMPLED_BIT,
+      VK_IMAGE_ASPECT_COLOR_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+      VK_IMAGE_TILING_OPTIMAL, 3);
+  EXPECT_THROW(integer_image.GenerateMipmaps(command.buffer()), std::invalid_argument);
+  vulkan::VulkanImage no_source(
+      &context_, 4, 4, kFormat, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+      VK_IMAGE_ASPECT_COLOR_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+      VK_IMAGE_TILING_OPTIMAL, 3);
+  vulkan::VulkanImage moved;
+  moved = std::move(no_source);
+  EXPECT_THROW(no_source.GenerateMipmaps(command.buffer()), std::invalid_argument);
+  EXPECT_THROW(moved.GenerateMipmaps(command.buffer()), std::invalid_argument);
+  EXPECT_THROW(integer_image.GenerateMipmaps(VK_NULL_HANDLE), std::invalid_argument);
+  SubmitAndWait(command);
 }
 
 }
