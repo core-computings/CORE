@@ -68,10 +68,8 @@ class RenderModel : public core::vulkan::VulkanRender {
   // index
   std::vector<uint32_t> indices_;
 
-  core::vulkan::VulkanBuffer vertex_buffer_staging_;
   core::vulkan::VulkanBuffer vertex_buffer_local_;
 
-  core::vulkan::VulkanBuffer index_buffer_staging_;
   core::vulkan::VulkanBuffer index_buffer_local_;
 
   // uniform buffer

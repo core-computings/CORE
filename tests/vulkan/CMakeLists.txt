@@ -29,6 +29,17 @@ target_include_directories(vulkan_tests
 
 add_dependencies(vulkan_tests vulkan_shaders vulkan_rasterizer_test_shader)
 
+add_vulkan_shader_target(vulkan_model_test_shaders
+  SOURCE_DIR ${PROJECT_SOURCE_DIR}/examples/vulkan/MipmapDemo
+  OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR}/model_shaders)
+target_sources(vulkan_tests PRIVATE
+  ${PROJECT_SOURCE_DIR}/examples/vulkan/MipmapDemo/RenderModel.cpp)
+target_include_directories(vulkan_tests PRIVATE
+  ${PROJECT_SOURCE_DIR}/examples/vulkan/MipmapDemo
+  ${CMAKE_CURRENT_BINARY_DIR}/model_shaders)
+add_dependencies(vulkan_tests vulkan_model_test_shaders)
+target_link_libraries(vulkan_tests PRIVATE tinyobjloader)
+
 target_link_libraries(vulkan_tests
   PRIVATE
   gtest_main
