@@ -10,6 +10,7 @@
 #include "GaussianBlurBaseline.h"
 #include "GaussianBlurReference.h"
 #include "VulkanCommandBuffer.h"
+#include "VulkanQueryPool.h"
 #include "VulkanSync.h"
 
 namespace {
@@ -20,39 +21,18 @@ using core::vulkan::VulkanContext;
 
 class DispatchTimer {
  public:
-  explicit DispatchTimer(VulkanContext* context) : context_(context) {
-    const VkQueryPoolCreateInfo info{
-        .sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO,
-        .pNext = nullptr,
-        .flags = 0,
-        .queryType = VK_QUERY_TYPE_TIMESTAMP,
-        .queryCount = 2,
-        .pipelineStatistics = 0,
-    };
-    uint32_t count = 0;
-    vkGetPhysicalDeviceQueueFamilyProperties(context_->physical_device, &count, nullptr);
-    std::vector<VkQueueFamilyProperties> families(count);
-    vkGetPhysicalDeviceQueueFamilyProperties(context_->physical_device, &count, families.data());
-    const uint32_t bits =
-        families[context_->GetQueueFamilyIndices().compute_family.value()].timestampValidBits;
-    if (bits == 0) {
-      throw std::runtime_error("Compute queue does not support timestamps");
-    }
-    mask_ = UINT64_MAX >> (64U - bits);
-    VK_CHECK(vkCreateQueryPool(context_->logical_device, &info, nullptr, &pool_));
-  }
-
-  ~DispatchTimer() { vkDestroyQueryPool(context_->logical_device, pool_, nullptr); }
+  explicit DispatchTimer(VulkanContext* context)
+      : context_(context), queries_(context, VK_QUERY_TYPE_TIMESTAMP) {}
 
   template <typename Pipeline>
   double Run(Pipeline& blur, core::vulkan::VulkanCommandBuffer& command,
              core::vulkan::VulkanFence& fence) {
     fence.Reset();
     command.BeginCommandBufferWithReset();
-    vkCmdResetQueryPool(command.buffer(), pool_, 0, 2);
-    vkCmdWriteTimestamp(command.buffer(), VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, pool_, 0);
+    queries_.Reset(command.buffer());
+    queries_.Query(command.buffer(), 0, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT);
     blur.Run(command.buffer());
-    vkCmdWriteTimestamp(command.buffer(), VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, pool_, 1);
+    queries_.Query(command.buffer(), 1);
     const VkMemoryBarrier barrier{
         .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
         .pNext = nullptr,
@@ -63,11 +43,8 @@ class DispatchTimer {
                          VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &barrier, 0, nullptr, 0, nullptr);
     command.Submit(fence.fence);
     VK_CHECK(vkWaitForFences(context_->logical_device, 1, &fence.fence, VK_TRUE, UINT64_MAX));
-    std::array<uint64_t, 2> timestamps{};
-    VK_CHECK(vkGetQueryPoolResults(context_->logical_device, pool_, 0, 2, sizeof(timestamps),
-                                   timestamps.data(), sizeof(uint64_t), VK_QUERY_RESULT_64_BIT));
-    const double microseconds = static_cast<double>((timestamps[1] - timestamps[0]) & mask_) *
-                                static_cast<double>(context_->timestamp_period) / 1000.0;
+    queries_.GetQueryResults();
+    const double microseconds = queries_.GetElapsedMilliseconds(0, 1) * 1000.0;
     if (microseconds <= 0.0) {
       throw std::runtime_error("Invalid GPU timestamp interval");
     }
@@ -76,8 +53,7 @@ class DispatchTimer {
 
  private:
   VulkanContext* context_;
-  VkQueryPool pool_ = VK_NULL_HANDLE;
-  uint64_t mask_ = UINT64_MAX;
+  core::vulkan::VulkanQueryPool queries_;
 };
 
 void Check(VulkanBuffer& buffer, const std::vector<float>& expected) {
