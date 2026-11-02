@@ -8,10 +8,32 @@ namespace example {
 
 ComputeBarycentric::ComputeBarycentric(core::vulkan::VulkanContext* context,
                                        const int width, const int height)
-    : core::vulkan::VulkanCompute(context), width_(width), height_(height) {
+    : ComputeBarycentric(context, width, height, WorkgroupSize{}) {}
+
+ComputeBarycentric::ComputeBarycentric(core::vulkan::VulkanContext* context,
+                                       int width, int height,
+                                       WorkgroupSize workgroup_size)
+    : core::vulkan::VulkanCompute(context),
+      width_(width),
+      height_(height),
+      workgroup_size_(workgroup_size) {
   if (width_ <= 0 || height_ <= 0 || width_ > 16384 || height_ > 16384) {
     throw std::invalid_argument(
         "Rasterizer dimensions must be between 1 and 16384");
+  }
+  VkPhysicalDeviceProperties properties{};
+  vkGetPhysicalDeviceProperties(context->physical_device, &properties);
+  const VkPhysicalDeviceLimits& limits = properties.limits;
+  if (workgroup_size_.x == 0 || workgroup_size_.y == 0 ||
+      workgroup_size_.x > limits.maxComputeWorkGroupSize[0] ||
+      workgroup_size_.y > limits.maxComputeWorkGroupSize[1] ||
+      static_cast<uint64_t>(workgroup_size_.x) * workgroup_size_.y >
+          limits.maxComputeWorkGroupInvocations ||
+      (static_cast<uint32_t>(width_) - 1) / workgroup_size_.x + 1 >
+          limits.maxComputeWorkGroupCount[0] ||
+      (static_cast<uint32_t>(height_) - 1) / workgroup_size_.y + 1 >
+          limits.maxComputeWorkGroupCount[1]) {
+    throw std::invalid_argument("Unsupported rasterizer workgroup size");
   }
   CreateBuffers();
 }
@@ -65,8 +87,10 @@ void ComputeBarycentric::Run(VkCommandBuffer command_buffer,
                      VK_SHADER_STAGE_COMPUTE_BIT, 0,
                      static_cast<uint32_t>(sizeof(parameters)), &parameters);
 
-  const uint32_t group_x = (static_cast<uint32_t>(width_) + 15) / 16;
-  const uint32_t group_y = (static_cast<uint32_t>(height_) + 15) / 16;
+  const uint32_t group_x =
+      (static_cast<uint32_t>(width_) - 1) / workgroup_size_.x + 1;
+  const uint32_t group_y =
+      (static_cast<uint32_t>(height_) - 1) / workgroup_size_.y + 1;
   vkCmdDispatch(command_buffer, group_x, group_y, 1);
 }
 
@@ -88,6 +112,19 @@ const std::vector<uint32_t>& ComputeBarycentric::LoadShaderCode() const {
 #include "Barycentric.comp.spv"
       ;
   return shader_code;
+}
+
+core::vulkan::ComputeSpecialization ComputeBarycentric::GetSpecialization()
+    const {
+  const uint32_t values[] = {workgroup_size_.x, workgroup_size_.y};
+  core::vulkan::ComputeSpecialization specialization{
+      .entries = {{.constantID = 0, .offset = 0, .size = sizeof(uint32_t)},
+                  {.constantID = 1,
+                   .offset = sizeof(uint32_t),
+                   .size = sizeof(uint32_t)}},
+      .data = std::vector<std::byte>(sizeof(values))};
+  std::memcpy(specialization.data.data(), values, sizeof(values));
+  return specialization;
 }
 
 void ComputeBarycentric::CreateBuffers() {
