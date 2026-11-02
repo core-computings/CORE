@@ -19,10 +19,17 @@ void RenderModel::Init() {
   CreateCombinedImageSamplerDescriptorSet(1, texture_image_.image_view, sampler_.sampler);
   vkUpdateDescriptorSets(context_->logical_device, writes_.size(), writes_.data(), 0, nullptr);
 
-  vertex_buffer_staging_.MapData([this](void* data) {
+  vulkan::VulkanBuffer vertex_staging(
+      context_, vertex_buffer_local_.Size(), VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+  vulkan::VulkanBuffer index_staging(
+      context_, index_buffer_local_.Size(), VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+
+  vertex_staging.MapData([this](void* data) {
     memcpy(data, vertices_.data(), sizeof(vertices_[0]) * vertices_.size());
   });
-  index_buffer_staging_.MapData(
+  index_staging.MapData(
       [this](void* data) { memcpy(data, indices_.data(), sizeof(indices_[0]) * indices_.size()); });
 
   uniform_buffer_.MapData([this](void* data) {
@@ -32,8 +39,18 @@ void RenderModel::Init() {
     memcpy(data, &uniform_data_, sizeof(UniformBufferObject));
   });
 
-  vertex_buffer_staging_.CopyToBuffer(vertex_buffer_local_);
-  index_buffer_staging_.CopyToBuffer(index_buffer_local_);
+  const vulkan::BatchBufferCopy uploads[] = {
+      {.source = &vertex_staging,
+       .destination = &vertex_buffer_local_,
+       .source_offset = 0,
+       .destination_offset = 0,
+       .size = VK_WHOLE_SIZE},
+      {.source = &index_staging,
+       .destination = &index_buffer_local_,
+       .source_offset = 0,
+       .destination_offset = 0,
+       .size = VK_WHOLE_SIZE}};
+  vulkan::VulkanBuffer::CopyBuffers(uploads);
 }
 
 void RenderModel::Init(const std::string& image_path, const std::string& model_path) {
@@ -157,18 +174,10 @@ void RenderModel::CreateBuffers() {
   const VkDeviceSize vertex_buffer_size = sizeof(vertices_[0]) * vertices_.size();
   const VkDeviceSize index_buffer_size = sizeof(indices_[0]) * indices_.size();
 
-  vertex_buffer_staging_ = core::vulkan::VulkanBuffer(
-      context_, vertex_buffer_size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-
   vertex_buffer_local_ = core::vulkan::VulkanBuffer(
       context_, vertex_buffer_size,
       VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
       VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-
-  index_buffer_staging_ = core::vulkan::VulkanBuffer(
-      context_, index_buffer_size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 
   index_buffer_local_ = core::vulkan::VulkanBuffer(
       context_, index_buffer_size,
