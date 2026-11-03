@@ -1,0 +1,58 @@
+#version 450
+
+layout(push_constant, std430) uniform PushConstants {
+    int width;
+    int height;
+    ivec2 vertex_a;
+    ivec2 vertex_b;
+    ivec2 vertex_c;
+}
+ubo;
+
+layout(std430, binding = 0) buffer rasterize_in_out { int rasterize[]; };
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1,
+       local_size_x_id = 0, local_size_y_id = 1) in;
+
+int CalArea(ivec2 p1, ivec2 p2, ivec2 p3) {
+    return (p2.x - p1.x) * (p3.y - p1.y) - (p2.y - p1.y) * (p3.x - p1.x);
+}
+
+bool BaryCentric(ivec2 pos) {
+    ivec2 p1 = ivec2(ubo.vertex_a);
+    ivec2 p2 = ivec2(ubo.vertex_b);
+    ivec2 p3 = ivec2(ubo.vertex_c);
+
+    int area1 =  CalArea(p1, p2, pos);
+    int area2 = CalArea(p2, p3, pos);
+    int area3 = CalArea(p3, p1, pos);
+
+    return area1 >= 0 && area2 >= 0 && area3 >= 0;
+}
+
+void main() {
+    ivec2 gid = ivec2(gl_GlobalInvocationID.xy);
+    const int row = gid.y;
+    const int col = gid.x;
+    if (row >= ubo.height || col >= ubo.width) return;
+
+    int ax = ivec2(ubo.vertex_a).x;
+    int ay = ivec2(ubo.vertex_a).y;
+    int bx = ivec2(ubo.vertex_b).x;
+    int by = ivec2(ubo.vertex_b).y;
+    int cx = ivec2(ubo.vertex_c).x;
+    int cy = ivec2(ubo.vertex_c).y;
+
+    int top = min(min(ay, by), cy);
+    int bottom = max(max(ay, by), cy);
+    int left = min(min(ax, bx), cx);
+    int right = max(max(ax, bx), cx);
+
+    if (row < top || row > bottom || col < left || col > right) return;
+
+
+    bool in_triangle = BaryCentric(ivec2(col, row));
+    if (in_triangle) {
+        rasterize[row * ubo.width + col] = 1;
+    }
+}

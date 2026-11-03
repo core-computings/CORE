@@ -6,6 +6,8 @@ layout(push_constant, std430) uniform PushConstants {
     ivec2 vertex_a;
     ivec2 vertex_b;
     ivec2 vertex_c;
+    ivec2 origin;
+    ivec2 last_pixel;
 }
 ubo;
 
@@ -31,24 +33,10 @@ bool BaryCentric(ivec2 pos) {
 }
 
 void main() {
-    ivec2 gid = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 gid = ivec2(gl_GlobalInvocationID.xy) + ubo.origin;
     const int row = gid.y;
     const int col = gid.x;
-    if (row >= ubo.height || col >= ubo.width) return;
-
-    int ax = ivec2(ubo.vertex_a).x;
-    int ay = ivec2(ubo.vertex_a).y;
-    int bx = ivec2(ubo.vertex_b).x;
-    int by = ivec2(ubo.vertex_b).y;
-    int cx = ivec2(ubo.vertex_c).x;
-    int cy = ivec2(ubo.vertex_c).y;
-
-    int top = min(min(ay, by), cy);
-    int bottom = max(max(ay, by), cy);
-    int left = min(min(ax, bx), cx);
-    int right = max(max(ax, bx), cx);
-
-    if (row < top || row > bottom || col < left || col > right) return;
+    if (row > ubo.last_pixel.y || col > ubo.last_pixel.x) return;
 
     // rasterize
     bool in_triangle = BaryCentric(ivec2(col, row));

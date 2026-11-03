@@ -48,8 +48,10 @@ class ComputeBarycentric : public core::vulkan::VulkanCompute {
     glm::ivec2 vertex_a;
     glm::ivec2 vertex_b;
     glm::ivec2 vertex_c;
+    glm::ivec2 origin;
+    glm::ivec2 last_pixel;
   };
-  static_assert(sizeof(PushConstants) == 32);
+  static_assert(sizeof(PushConstants) == 48);
 
   int width_;
   int height_;

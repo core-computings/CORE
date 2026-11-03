@@ -1,5 +1,6 @@
 #include "ComputeBarycentric.h"
 
+#include <algorithm>
 #include <cstring>
 #include <stdexcept>
 
@@ -67,11 +68,24 @@ void ComputeBarycentric::Run(VkCommandBuffer command_buffer,
           "Rasterizer coordinates must be between -16383 and 16383");
     }
   }
+  const int left =
+      std::max(0, std::min({triangle.a.x, triangle.b.x, triangle.c.x}));
+  const int top =
+      std::max(0, std::min({triangle.a.y, triangle.b.y, triangle.c.y}));
+  const int right = std::min(
+      width_ - 1, std::max({triangle.a.x, triangle.b.x, triangle.c.x}));
+  const int bottom = std::min(
+      height_ - 1, std::max({triangle.a.y, triangle.b.y, triangle.c.y}));
+  if (left > right || top > bottom) {
+    return;
+  }
   const PushConstants parameters{.width = width_,
                                  .height = height_,
                                  .vertex_a = triangle.a,
                                  .vertex_b = triangle.b,
-                                 .vertex_c = triangle.c};
+                                 .vertex_c = triangle.c,
+                                 .origin = glm::ivec2(left, top),
+                                 .last_pixel = glm::ivec2(right, bottom)};
   VkMemoryBarrier barrier{};
   barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
   barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
@@ -88,9 +102,9 @@ void ComputeBarycentric::Run(VkCommandBuffer command_buffer,
                      static_cast<uint32_t>(sizeof(parameters)), &parameters);
 
   const uint32_t group_x =
-      (static_cast<uint32_t>(width_) - 1) / workgroup_size_.x + 1;
+      static_cast<uint32_t>(right - left) / workgroup_size_.x + 1;
   const uint32_t group_y =
-      (static_cast<uint32_t>(height_) - 1) / workgroup_size_.y + 1;
+      static_cast<uint32_t>(bottom - top) / workgroup_size_.y + 1;
   vkCmdDispatch(command_buffer, group_x, group_y, 1);
 }
 
