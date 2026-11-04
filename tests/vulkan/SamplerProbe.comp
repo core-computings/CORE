@@ -1,0 +1,11 @@
+#version 450
+
+layout(local_size_x = 1) in;
+layout(binding = 0) uniform sampler2D image;
+layout(std430, binding = 1) readonly buffer Queries { vec4 queries[]; };
+layout(std430, binding = 2) writeonly buffer Results { vec4 results[]; };
+
+void main() {
+    uint index = gl_GlobalInvocationID.x;
+    results[index] = textureLod(image, queries[index].xy, queries[index].z);
+}
