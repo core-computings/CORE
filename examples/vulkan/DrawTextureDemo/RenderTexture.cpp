@@ -7,7 +7,14 @@ namespace core {
 
 RenderTexture::RenderTexture(core::vulkan::VulkanContext* context,
                              core::vulkan::VulkanRenderPass* render_pass)
-    : core::vulkan::VulkanRender(context, render_pass), sampler_(context) {
+    : RenderTexture(context, render_pass, core::vulkan::SamplerOptions{}) {}
+
+RenderTexture::RenderTexture(
+    core::vulkan::VulkanContext* context,
+    core::vulkan::VulkanRenderPass* render_pass,
+    const core::vulkan::SamplerOptions& sampler_options)
+    : core::vulkan::VulkanRender(context, render_pass),
+      sampler_(context, sampler_options) {
   CreateVertexBuffer();
 }
 

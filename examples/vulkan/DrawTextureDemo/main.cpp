@@ -1,7 +1,9 @@
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 
+#include <cstdio>
 #include <memory>
+#include <string_view>
 #include <vector>
 
 #include "RenderTexture.h"
@@ -14,7 +16,24 @@
 const uint32_t kWidth = 800;
 const uint32_t kHeight = 600;
 
-int main() {
+int main(int argc, char* argv[]) {
+  core::vulkan::SamplerOptions sampler_options;
+  for (int index = 1; index < argc; ++index) {
+    const std::string_view argument(argv[index]);
+    if (argument == "--nearest") {
+      sampler_options.mag_filter = VK_FILTER_NEAREST;
+      sampler_options.min_filter = VK_FILTER_NEAREST;
+      sampler_options.mipmap_mode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    } else if (argument == "--clamp") {
+      sampler_options.address_mode_u = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+      sampler_options.address_mode_v = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+      sampler_options.address_mode_w = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    } else {
+      std::fprintf(argument == "--help" ? stdout : stderr,
+                   "Usage: vk_texture_demo [--nearest] [--clamp]\n");
+      return argument == "--help" ? 0 : 1;
+    }
+  }
   VkSurfaceKHR window_surface = VK_NULL_HANDLE;
   GLFWwindow* window;
   glfwInit();
@@ -45,7 +64,8 @@ int main() {
   core::vulkan::VulkanFence in_flight_fence(&context);
   core::vulkan::VulkanRenderPass render_pass(&context, swap_chain->swapchain_image_format);
   std::unique_ptr<core::RenderTexture> texture =
-      std::make_unique<core::RenderTexture>(&context, &render_pass);
+      std::make_unique<core::RenderTexture>(&context, &render_pass,
+                                            sampler_options);
   const VkClearValue clear_color{
       .color =
           {

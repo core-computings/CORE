@@ -18,6 +18,9 @@ namespace core {
 class RenderTexture : public core::vulkan::VulkanRender {
  public:
   RenderTexture(core::vulkan::VulkanContext* context, core::vulkan::VulkanRenderPass* render_pass);
+  RenderTexture(core::vulkan::VulkanContext* context,
+                core::vulkan::VulkanRenderPass* render_pass,
+                const core::vulkan::SamplerOptions& sampler_options);
 
   void Init() override;
   void Init(const std::string& image_path);
