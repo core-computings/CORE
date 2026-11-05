@@ -1,6 +1,8 @@
 #include "VulkanBase.h"
 
+#include <algorithm>
 #include <stdexcept>
+#include <unordered_set>
 
 namespace core {
 namespace vulkan {
@@ -38,6 +40,12 @@ void VulkanBase::Init() {
   VkDescriptorSetLayoutCreateInfo layout_info{};
   layout_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
   const auto binding_info = CreateDescriptorLayoutBindings();
+  std::unordered_set<uint32_t> declared_bindings;
+  for (const VkDescriptorSetLayoutBinding& binding : binding_info) {
+    if (!declared_bindings.insert(binding.binding).second) {
+      throw std::invalid_argument("Duplicate descriptor binding");
+    }
+  }
   layout_info.bindingCount = static_cast<uint32_t>(binding_info.size());
   layout_info.pBindings = binding_info.data();
   VK_CHECK(vkCreateDescriptorSetLayout(context_->logical_device, &layout_info, nullptr,
@@ -66,6 +74,18 @@ void VulkanBase::Init() {
   alloc_info.descriptorSetCount = 1;
   alloc_info.pSetLayouts = &descriptor_set_layout_;
   VK_CHECK(vkAllocateDescriptorSets(context_->logical_device, &alloc_info, &descriptor_set_));
+
+  buffer_infos_.resize(binding_info.size());
+  image_infos_.resize(binding_info.size());
+  writes_.resize(binding_info.size());
+  for (size_t index = 0; index < binding_info.size(); ++index) {
+    VkWriteDescriptorSet& write = writes_[index];
+    write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    write.dstSet = descriptor_set_;
+    write.dstBinding = binding_info[index].binding;
+    write.descriptorType = binding_info[index].descriptorType;
+    write.descriptorCount = 1;
+  }
 
   // 3. Create pipeline layout
   VkPipelineLayoutCreateInfo pipeline_layout_info{};
@@ -126,59 +146,51 @@ VkShaderModule VulkanBase::CreateShaderModule(const std::vector<uint32_t>& shade
   return shader_module;
 }
 
+size_t VulkanBase::GetDescriptorIndex(uint32_t binding, VkDescriptorType type) const {
+  if (descriptor_set_ == VK_NULL_HANDLE) {
+    throw std::logic_error(
+        "Initialize the pipeline before preparing descriptors");
+  }
+  const auto write =
+      std::find_if(writes_.begin(), writes_.end(),
+                   [binding](const VkWriteDescriptorSet& candidate) {
+                     return candidate.dstBinding == binding;
+                   });
+  if (write == writes_.end() || write->descriptorType != type) {
+    throw std::invalid_argument(
+        "Descriptor binding is undeclared or has a different type");
+  }
+  return static_cast<size_t>(write - writes_.begin());
+}
+
 void VulkanBase::CreateUniformBufferDescriptorSet(const uint32_t binding,
                                                   const VulkanBuffer& buffer) {
-  CheckBufferInfoSize();
-  auto& bi = buffer_infos_[static_cast<int>(buffer_idx_++)];
-  bi.buffer = buffer.buffer;
-  bi.offset = 0;
-  bi.range = buffer.Size();
-
-  VkWriteDescriptorSet w{};
-  w.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-  w.dstSet = descriptor_set_;
-  w.dstBinding = binding;
-  w.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-  w.descriptorCount = 1;
-  w.pBufferInfo = &bi;
-  writes_[static_cast<int>(binding)] = w;
+  const size_t index =
+      GetDescriptorIndex(binding, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+  buffer_infos_[index] = {
+      .buffer = buffer.buffer, .offset = 0, .range = buffer.Size()};
+  writes_[index].pBufferInfo = &buffer_infos_[index];
 }
 
 void VulkanBase::CreateStorageBufferDescriptorSet(const uint32_t binding,
                                                   const VulkanBuffer& buffer) {
-  CheckBufferInfoSize();
-  auto& bi = buffer_infos_[static_cast<int>(buffer_idx_++)];
-  bi.buffer = buffer.buffer;
-  bi.offset = 0;
-  bi.range = buffer.Size();
-
-  VkWriteDescriptorSet w{};
-  w.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-  w.dstSet = descriptor_set_;
-  w.dstBinding = binding;
-  w.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-  w.descriptorCount = 1;
-  w.pBufferInfo = &bi;
-  writes_[static_cast<int>(binding)] = w;
+  const size_t index =
+      GetDescriptorIndex(binding, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+  buffer_infos_[index] = {
+      .buffer = buffer.buffer, .offset = 0, .range = buffer.Size()};
+  writes_[index].pBufferInfo = &buffer_infos_[index];
 }
 
-void VulkanBase::CreateCombinedImageSamplerDescriptorSet(const uint32_t binding,
-                                                         const VkImageView& image_view,
-                                                         const VkSampler& sampler) {
-  CheckImageInfoSize();
-  auto& ii = image_infos_[static_cast<int>(image_idx_++)];
-  ii.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-  ii.imageView = image_view;
-  ii.sampler = sampler;
-
-  VkWriteDescriptorSet w{};
-  w.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-  w.dstSet = descriptor_set_;
-  w.dstBinding = binding;
-  w.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-  w.descriptorCount = 1;
-  w.pImageInfo = &ii;
-  writes_[static_cast<int>(binding)] = w;
+void VulkanBase::CreateCombinedImageSamplerDescriptorSet(
+    const uint32_t binding, const VkImageView& image_view,
+    const VkSampler& sampler) {
+  const size_t index =
+      GetDescriptorIndex(binding, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+  image_infos_[index] = {
+      .sampler = sampler,
+      .imageView = image_view,
+      .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+  writes_[index].pImageInfo = &image_infos_[index];
 }
 
 }  // namespace vulkan

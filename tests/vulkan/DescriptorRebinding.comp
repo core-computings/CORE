@@ -1,0 +1,13 @@
+#version 450
+
+layout(local_size_x = 8) in;
+layout(binding = 7) uniform Parameters { uint addend; } parameters;
+layout(binding = 3) uniform sampler2D image_in;
+layout(std430, binding = 11) readonly buffer Input { uint values[]; } input_data;
+layout(std430, binding = 21) writeonly buffer Output { uint values[]; } output_data;
+
+void main() {
+    uint index = gl_LocalInvocationID.x;
+    uint texel = uint(round(textureLod(image_in, vec2(0.5), 0.0).r * 255.0));
+    output_data.values[index] = input_data.values[index] + parameters.addend + texel;
+}

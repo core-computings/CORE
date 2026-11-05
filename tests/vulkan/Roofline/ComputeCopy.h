@@ -19,6 +19,7 @@ class ComputeCopy : public VulkanCompute {
 
   void Init() override;
   void Run(const VkCommandBuffer command_buffer);
+  void BindBuffers(const VulkanBuffer& src, const VulkanBuffer& dst);
 
  protected:
   std::vector<BindingInfo> GetBindingInfo() const override;

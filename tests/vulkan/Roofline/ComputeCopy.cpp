@@ -1,6 +1,7 @@
 #include "ComputeCopy.h"
 
 #include <cstring>
+#include <stdexcept>
 
 namespace core {
 namespace vulkan {
@@ -18,10 +19,24 @@ void ComputeCopy::Init() {
   VulkanCompute::Init();
 
   CreateUniformBufferDescriptorSet(0, uniform_buffer_);
-  CreateStorageBufferDescriptorSet(1, src_buffer_);
-  CreateStorageBufferDescriptorSet(2, dst_buffer_);
+  BindBuffers(src_buffer_, dst_buffer_);
+}
 
-  vkUpdateDescriptorSets(context_->logical_device, writes_.size(), writes_.data(), 0, nullptr);
+void ComputeCopy::BindBuffers(const VulkanBuffer& src,
+                              const VulkanBuffer& dst) {
+  if (uniform_data_.count <= 0 ||
+      src.Size() < static_cast<VkDeviceSize>(uniform_data_.count) * 16 ||
+      dst.Size() < static_cast<VkDeviceSize>(uniform_data_.count) * 16 ||
+      src.buffer == dst.buffer) {
+    throw std::invalid_argument(
+        "Compute copy requires distinct buffers with sufficient capacity");
+  }
+  CreateStorageBufferDescriptorSet(1, src);
+  CreateStorageBufferDescriptorSet(2, dst);
+
+  vkUpdateDescriptorSets(context_->logical_device,
+                         static_cast<uint32_t>(writes_.size()), writes_.data(),
+                         0, nullptr);
 }
 
 void ComputeCopy::Run(const VkCommandBuffer command_buffer) {
