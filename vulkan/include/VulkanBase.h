@@ -1,7 +1,6 @@
 #pragma once
 
-#include <algorithm>
-#include <mutex>
+#include <cstddef>
 #include <vector>
 
 #include "VulkanBuffer.h"
@@ -26,6 +25,8 @@ class VulkanBase {
  public:
   explicit VulkanBase(VulkanContext* context);
   virtual ~VulkanBase();
+  VulkanBase(const VulkanBase&) = delete;
+  VulkanBase& operator=(const VulkanBase&) = delete;
 
   virtual void Init();
 
@@ -58,59 +59,7 @@ class VulkanBase {
   std::vector<VkWriteDescriptorSet> writes_;
 
  private:
-  std::mutex write_mutex_;
-
-  int buffer_idx_ = 0;
-  int image_idx_ = 0;
-
-  int GetBufferSize(const std::vector<BindingInfo>&& bindings) const {
-    int size = 0;
-    // TODO: consider other types of buffer
-    for (const auto& info : bindings) {
-      if (info.descriptor_type == VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER ||
-          info.descriptor_type == VK_DESCRIPTOR_TYPE_STORAGE_BUFFER) {
-        size++;
-      }
-    }
-    return size;
-  }
-
-  int GetImageSize(const std::vector<BindingInfo>&& bindings) const {
-    int size = 0;
-    // TODO: consider other types of image
-    for (const auto& info : bindings) {
-      if (info.descriptor_type == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER ||
-          info.descriptor_type == VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE ||
-          info.descriptor_type == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE) {
-        size++;
-      }
-    }
-    return size;
-  }
-
-  void CheckBufferInfoSize() {
-    const auto size = GetBufferSize(GetBindingInfo());
-    const auto total_size = GetBindingInfo().size();
-    if (buffer_infos_.size() == 0) {
-      buffer_infos_.resize(size);
-    }
-    std::lock_guard<std::mutex> lock(write_mutex_);
-    if (writes_.size() == 0) {
-      writes_.resize(total_size);
-    }
-  }
-
-  void CheckImageInfoSize() {
-    const auto size = GetImageSize(GetBindingInfo());
-    const auto total_size = GetBindingInfo().size();
-    if (image_infos_.size() == 0) {
-      image_infos_.resize(size);
-    }
-    std::lock_guard<std::mutex> lock(write_mutex_);
-    if (writes_.size() == 0) {
-      writes_.resize(total_size);
-    }
-  }
+  size_t GetDescriptorIndex(uint32_t binding, VkDescriptorType type) const;
 };
 
 }  // namespace vulkan
