@@ -48,3 +48,19 @@ target_include_directories(vulkan_gaussian_benchmark PRIVATE
   ${CMAKE_CURRENT_BINARY_DIR}/shaders)
 add_dependencies(vulkan_gaussian_benchmark vulkan_shaders)
 target_link_libraries(vulkan_gaussian_benchmark PRIVATE mat vulkan)
+
+add_executable(vulkan_pipeline_cache_benchmark
+  benchmarks/PipelineCacheBenchmark.cpp
+  ComputeGaussianBlur/ComputeGaussianBlur.cpp
+  ComputeSum/ComputeSum.cpp
+  Roofline/ComputeCopy.cpp
+  Roofline/ComputeFma.cpp
+  ${PROJECT_SOURCE_DIR}/examples/vulkan/ComputeBarycentricRasterizer/ComputeBarycentric.cpp)
+target_include_directories(vulkan_pipeline_cache_benchmark PRIVATE
+  ComputeGaussianBlur
+  ComputeSum
+  Roofline
+  ${PROJECT_SOURCE_DIR}/examples/vulkan/ComputeBarycentricRasterizer
+  ${CMAKE_CURRENT_BINARY_DIR}/shaders)
+add_dependencies(vulkan_pipeline_cache_benchmark vulkan_shaders vulkan_rasterizer_test_shader)
+target_link_libraries(vulkan_pipeline_cache_benchmark PRIVATE mat vulkan)

@@ -5,6 +5,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
+#include <filesystem>
 #include <memory>
 #include <string>
 #include <vector>
@@ -15,6 +16,7 @@
 #include "VulkanCommandBuffer.h"
 #include "VulkanDynamicRendering.h"
 #include "VulkanImage.h"
+#include "VulkanPipelineCache.h"
 #include "VulkanSwapChain.h"
 #include "VulkanSync.h"
 #include "VulkanUtils.h"
@@ -126,9 +128,15 @@ int main() {
     render_finished_semaphores.push_back(std::make_unique<core::vulkan::VulkanSemaphore>(&context));
   }
 
+  core::vulkan::VulkanPipelineCache pipeline_cache(
+      &context, std::filesystem::path(PIPELINE_CACHE_DIR) / "car_control_demo.cache");
+  skybox->SetPipelineCache(&pipeline_cache);
+  ground->SetPipelineCache(&pipeline_cache);
+  car->SetPipelineCache(&pipeline_cache);
   skybox->Init(kSkyboxFacePaths);
   ground->Init(kGroundTexturePath);
   car->Init();
+  pipeline_cache.Save();
 
   auto last_time = std::chrono::high_resolution_clock::now();
 

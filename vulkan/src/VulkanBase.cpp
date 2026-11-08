@@ -16,6 +16,10 @@ VulkanBase::~VulkanBase() {
   vkDestroyDescriptorSetLayout(context_->logical_device, descriptor_set_layout_, nullptr);
 }
 
+void VulkanBase::SetPipelineCache(const VulkanPipelineCache* cache) {
+  shared_pipeline_cache_ = cache == nullptr ? VK_NULL_HANDLE : cache->cache();
+}
+
 void VulkanBase::Init() {
   const std::vector<VkPushConstantRange> push_constant_ranges =
       GetPushConstantRanges();

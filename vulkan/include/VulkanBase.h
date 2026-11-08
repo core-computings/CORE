@@ -7,6 +7,7 @@
 #include "VulkanBuffer.h"
 #include "VulkanContext.h"
 #include "VulkanImage.h"
+#include "VulkanPipelineCache.h"
 
 namespace core {
 namespace vulkan {
@@ -29,6 +30,8 @@ class VulkanBase {
 
   virtual void Init();
 
+  void SetPipelineCache(const VulkanPipelineCache* cache);
+
   VkPipelineLayout pipeline_layout = VK_NULL_HANDLE;
   VkPipeline pipeline = VK_NULL_HANDLE;
 
@@ -41,6 +44,7 @@ class VulkanBase {
   std::vector<VkDescriptorSetLayoutBinding> CreateDescriptorLayoutBindings() const;
   std::vector<DescriptorPoolInfo> CreateDescriptorPoolSizes() const;
   VkShaderModule CreateShaderModule(const std::vector<uint32_t>& shader_code) const;
+  VkPipelineCache shared_pipeline_cache() const { return shared_pipeline_cache_; }
 
   void CreateUniformBufferDescriptorSet(const uint32_t binding, const VulkanBuffer& buffer);
   void CreateStorageBufferDescriptorSet(const uint32_t binding, const VulkanBuffer& buffer);
@@ -59,6 +63,7 @@ class VulkanBase {
 
  private:
   std::mutex write_mutex_;
+  VkPipelineCache shared_pipeline_cache_ = VK_NULL_HANDLE;
 
   int buffer_idx_ = 0;
   int image_idx_ = 0;
