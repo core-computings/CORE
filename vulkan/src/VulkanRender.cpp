@@ -179,8 +179,8 @@ void VulkanRender::CreatePipeline() {
   pipeline_info.basePipelineHandle = VK_NULL_HANDLE;
   pipeline_info.basePipelineIndex = -1;
 
-  VK_CHECK(vkCreateGraphicsPipelines(context_->logical_device, VK_NULL_HANDLE, 1, &pipeline_info,
-                                     nullptr, &pipeline));
+  VK_CHECK(vkCreateGraphicsPipelines(context_->logical_device, shared_pipeline_cache(), 1,
+                                     &pipeline_info, nullptr, &pipeline));
   vkDestroyShaderModule(context_->logical_device, fragment_shader_module, nullptr);
   vkDestroyShaderModule(context_->logical_device, vertex_shader_module, nullptr);
 }

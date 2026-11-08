@@ -3,6 +3,7 @@
 
 #include <chrono>
 #include <cstdlib>
+#include <filesystem>
 #include <memory>
 #include <vector>
 
@@ -13,6 +14,7 @@
 #include "VulkanCommandBuffer.h"
 #include "VulkanDynamicRendering.h"
 #include "VulkanImage.h"
+#include "VulkanPipelineCache.h"
 #include "VulkanSwapChain.h"
 #include "VulkanSync.h"
 #include "VulkanUtils.h"
@@ -111,8 +113,13 @@ int main() {
     render_finished_semaphores.push_back(std::make_unique<core::vulkan::VulkanSemaphore>(&context));
   }
 
+  core::vulkan::VulkanPipelineCache pipeline_cache(
+      &context, std::filesystem::path(PIPELINE_CACHE_DIR) / "physics_demo.cache");
+  floor->SetPipelineCache(&pipeline_cache);
+  cube->SetPipelineCache(&pipeline_cache);
   floor->Init();
   cube->Init();
+  pipeline_cache.Save();
 
   auto last_time = std::chrono::high_resolution_clock::now();
 

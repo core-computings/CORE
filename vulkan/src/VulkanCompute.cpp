@@ -1,6 +1,5 @@
 #include "VulkanCompute.h"
 
-#include <fstream>
 #include <limits>
 #include <stdexcept>
 #include <unordered_set>
@@ -10,9 +9,7 @@ namespace vulkan {
 
 VulkanCompute::VulkanCompute(VulkanContext* context) : VulkanBase(context) {}
 
-VulkanCompute::~VulkanCompute() {
-  vkDestroyPipelineCache(context_->logical_device, pipeline_cache_, nullptr);
-}
+VulkanCompute::~VulkanCompute() = default;
 
 void VulkanCompute::CreatePipeline() {
   const ComputeSpecialization specialization = GetSpecialization();
@@ -41,7 +38,13 @@ void VulkanCompute::CreatePipeline() {
     ~ShaderModuleScope() { vkDestroyShaderModule(device, module, nullptr); }
   } shader_scope{.device = context_->logical_device, .module = shader_module};
 
-  CreatePipelineCache(GetPipelineCache());
+  if (shared_pipeline_cache() != VK_NULL_HANDLE) {
+    owned_pipeline_cache_.reset();
+    pipeline_cache_ = shared_pipeline_cache();
+  } else {
+    owned_pipeline_cache_ = std::make_unique<VulkanPipelineCache>(context_, GetPipelineCache());
+    pipeline_cache_ = owned_pipeline_cache_->cache();
+  }
 
   VkPipelineShaderStageCreateInfo shader_stage_info{};
   shader_stage_info.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
@@ -64,56 +67,8 @@ ComputeSpecialization VulkanCompute::GetSpecialization() const { return {}; }
 
 const std::string VulkanCompute::GetPipelineCache() const { return ""; }
 
-std::vector<char> VulkanCompute::LoadPipelineCache(const std::string& cache) {
-  // Load the pipeline cache from the specified file
-  std::ifstream file(cache, std::ios::ate | std::ios::binary);
-  if (!file.is_open()) {
-    return {};
-  }
-
-  size_t file_size = static_cast<size_t>(file.tellg());
-  file.seekg(0);
-
-  std::vector<char> buffer(file_size);
-  file.read(buffer.data(), file_size);
-  return buffer;
-}
-
-void VulkanCompute::CreatePipelineCache(const std::string& cache) {
-  std::vector<char> cache_data = LoadPipelineCache(cache);
-  VkPipelineCacheCreateInfo cache_info{};
-  cache_info.sType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO;
-
-  if (cache_data.empty()) {
-    cache_info.initialDataSize = 0;
-    cache_info.pInitialData = nullptr;
-  } else {
-    cache_info.initialDataSize = cache_data.size();
-    cache_info.pInitialData = cache_data.data();
-  }
-
-  VK_CHECK(vkCreatePipelineCache(context_->logical_device, &cache_info, nullptr, &pipeline_cache_));
-}
-
 void VulkanCompute::SavePipelineCache(const std::string& cache) const {
-  if (pipeline_cache_ == VK_NULL_HANDLE) {
-    return;
-  }
-
-  size_t cache_size = 0;
-  VK_CHECK(vkGetPipelineCacheData(context_->logical_device, pipeline_cache_, &cache_size, nullptr));
-  if (cache_size == 0) {
-    return;
-  }
-
-  std::vector<char> cache_data(cache_size);
-  VK_CHECK(vkGetPipelineCacheData(context_->logical_device, pipeline_cache_, &cache_size,
-                                  cache_data.data()));
-
-  std::ofstream file(cache, std::ios::binary);
-  if (file.is_open()) {
-    file.write(cache_data.data(), cache_data.size());
-  }
+  VulkanPipelineCache::Write(context_->logical_device, pipeline_cache_, cache);
 }
 
 }  // namespace vulkan
