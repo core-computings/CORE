@@ -1,11 +1,42 @@
 #include "VulkanImage.h"
 
+#include <algorithm>
 #include <stdexcept>
+#include <vector>
 
 #include "VulkanBuffer.h"
 
 namespace core {
 namespace vulkan {
+namespace {
+
+VkDeviceSize TexelSize(VkFormat format) {
+  switch (format) {
+    case VK_FORMAT_R8_UNORM:
+    case VK_FORMAT_R8_UINT:
+      return 1;
+    case VK_FORMAT_R8G8_UNORM:
+    case VK_FORMAT_R16_SFLOAT:
+      return 2;
+    case VK_FORMAT_R8G8B8A8_UNORM:
+    case VK_FORMAT_R8G8B8A8_SRGB:
+    case VK_FORMAT_B8G8R8A8_UNORM:
+    case VK_FORMAT_B8G8R8A8_SRGB:
+    case VK_FORMAT_R32_SFLOAT:
+    case VK_FORMAT_R32_UINT:
+    case VK_FORMAT_R32_SINT:
+      return 4;
+    case VK_FORMAT_R16G16B16A16_SFLOAT:
+    case VK_FORMAT_R32G32_SFLOAT:
+      return 8;
+    case VK_FORMAT_R32G32B32A32_SFLOAT:
+      return 16;
+    default:
+      return 0;
+  }
+}
+
+}
 
 VulkanImage::VulkanImage(VulkanContext* context, const uint32_t width, const uint32_t height,
                          const VkFormat format, const VkImageUsageFlags usage,
@@ -193,6 +224,20 @@ void VulkanImage::TransitionImageLayout(VkCommandBuffer command_buffer, VkImageL
 
     source_stage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
     destination_stage = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
+  } else if (old_layout == VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL &&
+             new_layout == VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL) {
+    barrier.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+
+    source_stage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    destination_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+  } else if (old_layout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL &&
+             new_layout == VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL) {
+    barrier.srcAccessMask = 0;
+    barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+
+    source_stage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+    destination_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
   } else {
     throw std::invalid_argument("unsupported layout transition!");
   }
@@ -356,6 +401,75 @@ void VulkanImage::GenerateMipmaps(VkCommandBuffer command_buffer) {
   vkCmdPipelineBarrier(command_buffer, VK_PIPELINE_STAGE_TRANSFER_BIT,
                        VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1,
                        &barrier);
+}
+
+VkDeviceSize VulkanImage::PackedSize() const {
+  if (image == VK_NULL_HANDLE) {
+    throw std::invalid_argument("packed readback size requires an image");
+  }
+  const VkDeviceSize texel_size = TexelSize(image_format_);
+  if (texel_size == 0) {
+    throw std::invalid_argument("image format does not support packed readback");
+  }
+  VkDeviceSize size = 0;
+  for (uint32_t level = 0; level < mip_levels_; ++level) {
+    const VkDeviceSize width = std::max(image_width >> level, 1U);
+    const VkDeviceSize height = std::max(image_height >> level, 1U);
+    size += width * height * static_cast<VkDeviceSize>(array_layers_) * texel_size;
+  }
+  return size;
+}
+
+void VulkanImage::CopyToBuffer(VkCommandBuffer command_buffer, VulkanBuffer& dst_buffer) const {
+  if (command_buffer == VK_NULL_HANDLE || image == VK_NULL_HANDLE ||
+      dst_buffer.buffer == VK_NULL_HANDLE) {
+    throw std::invalid_argument("image readback requires a command buffer, image, and buffer");
+  }
+  if (samples_ != VK_SAMPLE_COUNT_1_BIT || (usage_ & VK_IMAGE_USAGE_TRANSFER_SRC_BIT) == 0) {
+    throw std::invalid_argument("image readback requires a single-sample transfer source image");
+  }
+  if ((dst_buffer.Usage() & VK_BUFFER_USAGE_TRANSFER_DST_BIT) == 0) {
+    throw std::invalid_argument("image readback requires a transfer destination buffer");
+  }
+  if (dst_buffer.Size() < PackedSize()) {
+    throw std::out_of_range("image readback buffer is too small");
+  }
+
+  const VkDeviceSize texel_size = TexelSize(image_format_);
+  std::vector<VkBufferImageCopy> regions;
+  regions.reserve(mip_levels_);
+  VkDeviceSize offset = 0;
+  for (uint32_t level = 0; level < mip_levels_; ++level) {
+    const uint32_t width = std::max(image_width >> level, 1U);
+    const uint32_t height = std::max(image_height >> level, 1U);
+    regions.push_back(VkBufferImageCopy{
+        .bufferOffset = offset,
+        .bufferRowLength = 0,
+        .bufferImageHeight = 0,
+        .imageSubresource = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                             .mipLevel = level,
+                             .baseArrayLayer = 0,
+                             .layerCount = array_layers_},
+        .imageOffset = {.x = 0, .y = 0, .z = 0},
+        .imageExtent = {.width = width, .height = height, .depth = 1},
+    });
+    offset += static_cast<VkDeviceSize>(width) * static_cast<VkDeviceSize>(height) *
+              static_cast<VkDeviceSize>(array_layers_) * texel_size;
+  }
+
+  vkCmdCopyImageToBuffer(command_buffer, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                         dst_buffer.buffer, static_cast<uint32_t>(regions.size()),
+                         regions.data());
+
+  const VkMemoryBarrier barrier{
+      .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+      .pNext = nullptr,
+      .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+      .dstAccessMask = VK_ACCESS_HOST_READ_BIT | VK_ACCESS_MEMORY_READ_BIT,
+  };
+  vkCmdPipelineBarrier(command_buffer, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                       VK_PIPELINE_STAGE_HOST_BIT | VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 1,
+                       &barrier, 0, nullptr, 0, nullptr);
 }
 
 }  // namespace vulkan

@@ -223,7 +223,11 @@ void VulkanContext::PickPhysicalDevice(const QueueFamilyType queue_family_type) 
 
   for (const auto& device : devices) {
     FindQueueFamilies(device, queue_family_type);
-    if (queue_family_indices_.is_complete() && SupportsDynamicRendering(device)) {
+    const bool headless_graphics = queue_family_type == QueueFamilyType::Graphics &&
+                                   surface_ == VK_NULL_HANDLE &&
+                                   queue_family_indices_.graphics_family.has_value();
+    if ((queue_family_indices_.is_complete() || headless_graphics) &&
+        SupportsDynamicRendering(device)) {
       physical_device = device;
       break;
     }
@@ -259,6 +263,7 @@ void VulkanContext::FindQueueFamilies(VkPhysicalDevice device,
       throw std::runtime_error("Currently only support compute and graphics");
   }
 
+  queue_family_indices_ = {};
   uint32_t queue_family_count = 0;
   vkGetPhysicalDeviceQueueFamilyProperties(device, &queue_family_count, nullptr);
 
@@ -273,6 +278,9 @@ void VulkanContext::FindQueueFamilies(VkPhysicalDevice device,
     }
     if (queue_family.queueFlags & graphics_flag) {
       queue_family_indices_.graphics_family = i;
+      if (surface_ == VK_NULL_HANDLE) {
+        break;
+      }
       VkBool32 present_support = false;
       vkGetPhysicalDeviceSurfaceSupportKHR(device, i, surface_, &present_support);
       if (present_support) {

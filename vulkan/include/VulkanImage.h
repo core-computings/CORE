@@ -38,6 +38,10 @@ class VulkanImage {
 
   void GenerateMipmaps(VkCommandBuffer command_buffer);
 
+  VkDeviceSize PackedSize() const;
+
+  void CopyToBuffer(VkCommandBuffer command_buffer, VulkanBuffer& dst_buffer) const;
+
   // void CreateTextureImage(const std::string& image_path);
 
  private:
