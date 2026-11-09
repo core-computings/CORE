@@ -55,6 +55,8 @@ class VulkanBuffer {
 
   VkDeviceSize Size() const { return buffer_size_; }
 
+  VkBufferUsageFlags Usage() const { return usage_; }
+
   VkBuffer buffer = VK_NULL_HANDLE;
 
   // TODO: keep them public

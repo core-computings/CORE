@@ -50,57 +50,16 @@ class VulkanImageRecordingTest : public testing::Test {
 
   std::vector<uint32_t> ReadImage(vulkan::VulkanImage& image, uint32_t levels,
                                  uint32_t layers) {
-    std::vector<VkBufferImageCopy> regions;
-    uint32_t width = image.image_width;
-    uint32_t height = image.image_height;
-    VkDeviceSize bytes = 0;
-    for (uint32_t level = 0; level < levels; ++level) {
-      VkBufferImageCopy region{};
-      region.bufferOffset = bytes;
-      region.imageSubresource = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-                                 .mipLevel = level,
-                                 .baseArrayLayer = 0,
-                                 .layerCount = layers};
-      region.imageExtent = {.width = width, .height = height, .depth = 1};
-      regions.push_back(region);
-      bytes += static_cast<VkDeviceSize>(width) * height * layers * sizeof(uint32_t);
-      width = std::max(width / 2, 1U);
-      height = std::max(height / 2, 1U);
-    }
-    vulkan::VulkanBuffer destination(&context_, bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-                                     kHostMemory);
+    vulkan::VulkanBuffer destination(&context_, image.PackedSize(),
+                                     VK_BUFFER_USAGE_TRANSFER_DST_BIT, kHostMemory);
     const vulkan::VulkanCommandBuffer command =
         vulkan::VulkanCommandBuffer::BeginOneTimeCommands(&context_);
-    VkImageMemoryBarrier image_barrier{};
-    image_barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    image_barrier.srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT;
-    image_barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-    image_barrier.oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    image_barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-    image_barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    image_barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    image_barrier.image = image.image;
-    image_barrier.subresourceRange = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-                                      .baseMipLevel = 0,
-                                      .levelCount = levels,
-                                      .baseArrayLayer = 0,
-                                      .layerCount = layers};
-    vkCmdPipelineBarrier(command.buffer(), VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
-                         VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1,
-                         &image_barrier);
-    vkCmdCopyImageToBuffer(command.buffer(), image.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                           destination.buffer, static_cast<uint32_t>(regions.size()),
-                           regions.data());
-    const VkMemoryBarrier host_barrier{
-        .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
-        .pNext = nullptr,
-        .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
-        .dstAccessMask = VK_ACCESS_HOST_READ_BIT,
-    };
-    vkCmdPipelineBarrier(command.buffer(), VK_PIPELINE_STAGE_TRANSFER_BIT,
-                         VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &host_barrier, 0, nullptr, 0, nullptr);
+    image.TransitionImageLayout(command.buffer(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                                VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, kFormat, levels, layers);
+    image.CopyToBuffer(command.buffer(), destination);
     SubmitAndWait(command);
-    std::vector<uint32_t> result(static_cast<size_t>(bytes / sizeof(uint32_t)));
+    const size_t bytes = static_cast<size_t>(destination.Size());
+    std::vector<uint32_t> result(bytes / sizeof(uint32_t));
     destination.MapData([&](void* data) { std::memcpy(result.data(), data, bytes); });
     return result;
   }
