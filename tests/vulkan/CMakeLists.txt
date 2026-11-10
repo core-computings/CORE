@@ -10,6 +10,10 @@ file(GLOB test_src
   "Roofline/*.cpp"
   "*.cpp")
 
+if(NOT APPLE AND NOT ANDROID)
+  list(FILTER test_src EXCLUDE REGEX "VulkanSwapChainTest\\.cpp$")
+endif()
+
 add_executable(vulkan_tests ${test_src})
 
 add_vulkan_shader_target(vulkan_rasterizer_test_shader
@@ -36,6 +40,10 @@ target_link_libraries(vulkan_tests
   stb
   timer
   vulkan)
+
+if(ANDROID)
+  target_link_libraries(vulkan_tests PRIVATE android mediandk)
+endif()
 
 add_executable(vulkan_transfer_benchmark benchmarks/BufferTransferBenchmark.cpp)
 target_link_libraries(vulkan_transfer_benchmark PRIVATE vulkan)

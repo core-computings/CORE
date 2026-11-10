@@ -1,22 +1,115 @@
 #include "VulkanSwapChain.h"
 
+#include <algorithm>
+#include <limits>
+#include <memory>
+#include <stdexcept>
+#include <utility>
+
 #include "VulkanCommandBuffer.h"
 
 namespace core {
 namespace vulkan {
 
 VulkanSwapChain::VulkanSwapChain(VulkanContext* context, VkSurfaceKHR surface,
-                                 const bool enable_depth_buffer)
-    : context_(context), surface_(surface), enable_depth_buffer_(enable_depth_buffer) {
+                                 const bool enable_depth_buffer,
+                                 const VkExtent2D framebuffer_extent)
+    : context_(context),
+      surface_(surface),
+      enable_depth_buffer_(enable_depth_buffer),
+      retirement_fence_(context) {
   swapchain_support_details_ = QuerySwapChainSupport(context_->physical_device);
   surface_format_ = ChooseSwapSurfaceFormat(swapchain_support_details_.formats);
   present_mode_ = ChooseSwapPresentMode(swapchain_support_details_.present_modes);
-  swapchain_extent = ChooseSwapExtent(swapchain_support_details_.capabilities);
+  swapchain_extent =
+      ChooseSwapExtent(swapchain_support_details_.capabilities, framebuffer_extent);
+  if (swapchain_extent.width == 0 || swapchain_extent.height == 0) {
+    throw std::runtime_error("swap chain surface has no drawable extent");
+  }
+  swapchain_image_format = surface_format_.format;
 
-  uint32_t image_count = swapchain_support_details_.capabilities.minImageCount + 1;
-  if (swapchain_support_details_.capabilities.maxImageCount > 0 &&
-      image_count > swapchain_support_details_.capabilities.maxImageCount) {
-    image_count = swapchain_support_details_.capabilities.maxImageCount;
+  swapchain = CreateSwapChain(swapchain_extent, VK_NULL_HANDLE);
+  struct ConstructionGuard {
+    VulkanSwapChain* owner;
+    bool completed;
+    ~ConstructionGuard() {
+      if (!completed) {
+        owner->UnInit();
+      }
+    }
+  } guard{.owner = this, .completed = false};
+  RetrieveSwapChainImages();
+  CreateImageViews();
+  CreatePresentSemaphores();
+  guard.completed = true;
+}
+
+VulkanSwapChain::~VulkanSwapChain() {
+  UnInit();
+  if (context_ && surface_ != VK_NULL_HANDLE) {
+    vkDestroySurfaceKHR(context_->instance, surface_, nullptr);
+  }
+}
+
+void VulkanSwapChain::UnInit() {
+  DestroyImageResources();
+  if (swapchain != VK_NULL_HANDLE) {
+    vkDestroySwapchainKHR(context_->logical_device, swapchain, nullptr);
+    swapchain = VK_NULL_HANDLE;
+  }
+  swapchain_images.clear();
+  swapchain_image_layouts_.clear();
+  present_semaphores_.clear();
+  if (retirement_fence_pending_) {
+    static_cast<void>(vkWaitForFences(context_->logical_device, 1, &retirement_fence_.fence,
+                                      VK_TRUE, UINT64_MAX));
+    retirement_fence_pending_ = false;
+  }
+  DestroyRetiredSwapChains();
+}
+
+bool VulkanSwapChain::Recreate(VkExtent2D framebuffer_extent) {
+  if (swapchain == VK_NULL_HANDLE) {
+    throw std::logic_error("swap chain has been released");
+  }
+  if (framebuffer_extent.width == 0 || framebuffer_extent.height == 0) {
+    return false;
+  }
+
+  VK_CHECK(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(
+      context_->physical_device, surface_, &swapchain_support_details_.capabilities));
+  const VkExtent2D extent =
+      ChooseSwapExtent(swapchain_support_details_.capabilities, framebuffer_extent);
+  if (extent.width == 0 || extent.height == 0) {
+    return false;
+  }
+
+  VK_CHECK(vkDeviceWaitIdle(context_->logical_device));
+  DestroyImageResources();
+  swapchain_images.clear();
+  swapchain_image_layouts_.clear();
+  for (std::unique_ptr<VulkanSemaphore>& semaphore : present_semaphores_) {
+    retired_semaphores_.push_back(std::move(semaphore));
+  }
+  present_semaphores_.clear();
+  retired_swapchains_.push_back(swapchain);
+  retire_on_signal_ = false;
+  swapchain = VK_NULL_HANDLE;
+  swapchain = CreateSwapChain(extent, retired_swapchains_.back());
+  swapchain_extent = extent;
+
+  RetrieveSwapChainImages();
+  CreateImageViews();
+  CreatePresentSemaphores();
+  return true;
+}
+
+VkSwapchainKHR VulkanSwapChain::CreateSwapChain(VkExtent2D extent,
+                                                VkSwapchainKHR old_swapchain) const {
+  const VkSurfaceCapabilitiesKHR& capabilities = swapchain_support_details_.capabilities;
+  uint32_t image_count = capabilities.minImageCount + 1;
+  if (capabilities.maxImageCount > 0 && image_count > capabilities.maxImageCount) {
+    image_count = capabilities.maxImageCount;
   }
 
   VkSwapchainCreateInfoKHR create_info{};
@@ -26,7 +119,7 @@ VulkanSwapChain::VulkanSwapChain(VulkanContext* context, VkSurfaceKHR surface,
   create_info.minImageCount = image_count;
   create_info.imageFormat = surface_format_.format;
   create_info.imageColorSpace = surface_format_.colorSpace;
-  create_info.imageExtent = swapchain_extent;
+  create_info.imageExtent = extent;
   create_info.imageArrayLayers = 1;
   create_info.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
 
@@ -42,50 +135,106 @@ VulkanSwapChain::VulkanSwapChain(VulkanContext* context, VkSurfaceKHR surface,
     create_info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
   }
 
-  create_info.preTransform = swapchain_support_details_.capabilities.currentTransform;
-  create_info.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+  create_info.preTransform = capabilities.currentTransform;
+  create_info.compositeAlpha = VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR;
+  for (const VkCompositeAlphaFlagBitsKHR composite_alpha :
+       {VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR, VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR,
+        VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR, VK_COMPOSITE_ALPHA_POST_MULTIPLIED_BIT_KHR}) {
+    if ((capabilities.supportedCompositeAlpha & composite_alpha) != 0) {
+      create_info.compositeAlpha = composite_alpha;
+      break;
+    }
+  }
   create_info.presentMode = present_mode_;
   create_info.clipped = VK_TRUE;
+  create_info.oldSwapchain = old_swapchain;
 
-  VkResult result =
-      vkCreateSwapchainKHR(context_->logical_device, &create_info, nullptr, &swapchain);
+  VkSwapchainKHR new_swapchain = VK_NULL_HANDLE;
+  const VkResult result =
+      vkCreateSwapchainKHR(context_->logical_device, &create_info, nullptr, &new_swapchain);
   if (result != VK_SUCCESS) {
     throw std::runtime_error("create swap chain failed");
   }
+  return new_swapchain;
+}
 
-  vkGetSwapchainImagesKHR(context_->logical_device, swapchain, &image_count, nullptr);
+void VulkanSwapChain::RetrieveSwapChainImages() {
+  uint32_t image_count = 0;
+  VK_CHECK(vkGetSwapchainImagesKHR(context_->logical_device, swapchain, &image_count, nullptr));
   swapchain_images.resize(image_count);
-  swapchain_image_layouts_.resize(image_count, VK_IMAGE_LAYOUT_UNDEFINED);
-  result = vkGetSwapchainImagesKHR(context_->logical_device, swapchain, &image_count,
-                                   swapchain_images.data());
-  if (result != VK_SUCCESS) {
-    throw std::runtime_error("get swap chain images failed");
-  }
-  swapchain_image_format = surface_format_.format;
-
-  CreateImageViews();
+  VK_CHECK(vkGetSwapchainImagesKHR(context_->logical_device, swapchain, &image_count,
+                                   swapchain_images.data()));
+  swapchain_image_layouts_.assign(image_count, VK_IMAGE_LAYOUT_UNDEFINED);
+  presented_images_.assign(image_count, false);
 }
 
-VulkanSwapChain::~VulkanSwapChain() {
-  UnInit();
-  if (context_ && surface_ != VK_NULL_HANDLE) {
-    vkDestroySurfaceKHR(context_->instance, surface_, nullptr);
+void VulkanSwapChain::CreatePresentSemaphores() {
+  present_semaphores_.clear();
+  for (size_t i = 0; i < swapchain_images.size(); ++i) {
+    present_semaphores_.push_back(std::make_unique<VulkanSemaphore>(context_));
   }
 }
 
-void VulkanSwapChain::UnInit() {
-  for (auto framebuffer : swapchain_framebuffers) {
+VkSemaphore VulkanSwapChain::PresentSemaphore(uint32_t image_index) const {
+  if (image_index >= present_semaphores_.size()) {
+    throw std::out_of_range("swapchain image index out of range");
+  }
+  return present_semaphores_[image_index]->semaphore;
+}
+
+void VulkanSwapChain::DestroyImageResources() {
+  for (VkFramebuffer framebuffer : swapchain_framebuffers) {
     vkDestroyFramebuffer(context_->logical_device, framebuffer, nullptr);
   }
-  for (auto imageview : swapchain_image_views) {
-    vkDestroyImageView(context_->logical_device, imageview, nullptr);
+  swapchain_framebuffers.clear();
+  for (VkImageView image_view : swapchain_image_views) {
+    vkDestroyImageView(context_->logical_device, image_view, nullptr);
   }
-  if (swapchain) {
-    vkDestroySwapchainKHR(context_->logical_device, swapchain, nullptr);
+  swapchain_image_views.clear();
+}
+
+VkResult VulkanSwapChain::AcquireNextImage(VkSemaphore semaphore, uint64_t timeout,
+                                           uint32_t* image_index) {
+  const bool track = !retired_swapchains_.empty() && !retirement_fence_pending_;
+  if (track) {
+    retirement_fence_.Reset();
+  }
+  const VkResult result =
+      vkAcquireNextImageKHR(context_->logical_device, swapchain, timeout, semaphore,
+                            track ? retirement_fence_.fence : VK_NULL_HANDLE, image_index);
+  if (track && (result == VK_SUCCESS || result == VK_SUBOPTIMAL_KHR)) {
+    retirement_fence_pending_ = true;
+    retire_on_signal_ =
+        *image_index < presented_images_.size() && presented_images_[*image_index];
+  }
+  ReleaseRetiredSwapChains();
+  return result;
+}
+
+void VulkanSwapChain::ReleaseRetiredSwapChains() {
+  if (!retirement_fence_pending_) {
+    return;
+  }
+  const VkResult status = vkGetFenceStatus(context_->logical_device, retirement_fence_.fence);
+  if (status == VK_NOT_READY) {
+    return;
+  }
+  VK_CHECK(status);
+  retirement_fence_pending_ = false;
+  if (retire_on_signal_) {
+    DestroyRetiredSwapChains();
   }
 }
 
-VkResult VulkanSwapChain::Present(uint32_t image_index, VkSemaphore wait_semaphore) const {
+void VulkanSwapChain::DestroyRetiredSwapChains() {
+  for (VkSwapchainKHR retired_swapchain : retired_swapchains_) {
+    vkDestroySwapchainKHR(context_->logical_device, retired_swapchain, nullptr);
+  }
+  retired_swapchains_.clear();
+  retired_semaphores_.clear();
+}
+
+VkResult VulkanSwapChain::Present(uint32_t image_index, VkSemaphore wait_semaphore) {
   VkPresentInfoKHR present_info{};
   present_info.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
   present_info.waitSemaphoreCount = 1;
@@ -93,7 +242,12 @@ VkResult VulkanSwapChain::Present(uint32_t image_index, VkSemaphore wait_semapho
   present_info.swapchainCount = 1;
   present_info.pSwapchains = &swapchain;
   present_info.pImageIndices = &image_index;
-  return vkQueuePresentKHR(context_->present_queue(), &present_info);
+  const VkResult result = vkQueuePresentKHR(context_->present_queue(), &present_info);
+  if ((result == VK_SUCCESS || result == VK_SUBOPTIMAL_KHR) &&
+      image_index < presented_images_.size()) {
+    presented_images_[image_index] = true;
+  }
+  return result;
 }
 
 SwapChainSupportDetails VulkanSwapChain::QuerySwapChainSupport(VkPhysicalDevice device) {
@@ -138,25 +292,20 @@ VkPresentModeKHR VulkanSwapChain::ChooseSwapPresentMode(
   return VK_PRESENT_MODE_FIFO_KHR;
 }
 
-VkExtent2D VulkanSwapChain::ChooseSwapExtent(const VkSurfaceCapabilitiesKHR& capabilities) {
+VkExtent2D VulkanSwapChain::ChooseSwapExtent(const VkSurfaceCapabilitiesKHR& capabilities,
+                                             VkExtent2D framebuffer_extent) const {
   if (capabilities.currentExtent.width != std::numeric_limits<uint32_t>::max()) {
     return capabilities.currentExtent;
-  } else {
-#if defined(__APPLE__)
-    int width, height;
-    glfwGetFramebufferSize(window_, &width, &height);
-
-    VkExtent2D actual_extent = {static_cast<uint32_t>(width), static_cast<uint32_t>(height)};
-
-    actual_extent.width = std::clamp(actual_extent.width, capabilities.minImageExtent.width,
-                                     capabilities.maxImageExtent.width);
-    actual_extent.height = std::clamp(actual_extent.height, capabilities.minImageExtent.height,
-                                      capabilities.maxImageExtent.height);
-
-    return actual_extent;
-#endif
   }
-  return capabilities.currentExtent;
+  if (framebuffer_extent.width == 0 || framebuffer_extent.height == 0) {
+    return VkExtent2D{.width = 0, .height = 0};
+  }
+  return VkExtent2D{
+      .width = std::clamp(framebuffer_extent.width, capabilities.minImageExtent.width,
+                          capabilities.maxImageExtent.width),
+      .height = std::clamp(framebuffer_extent.height, capabilities.minImageExtent.height,
+                           capabilities.maxImageExtent.height),
+  };
 }
 
 void VulkanSwapChain::CreateImageViews() {

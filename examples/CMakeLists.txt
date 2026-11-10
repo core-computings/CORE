@@ -18,6 +18,8 @@ endif()
 
 # only add glfw/draw triangle for macos
 if(APPLE)
+    include_directories(${CMAKE_CURRENT_LIST_DIR}/vulkan/common)
+
     # 1. glfw demo
     build_example(glfw_demo
         SOURCE_GLOBS "./vulkan/GLFWWindowDemo/*.cpp"

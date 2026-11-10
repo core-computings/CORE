@@ -5,6 +5,7 @@
 #include <memory>
 #include <vector>
 
+#include "GlfwSwapChainResizer.h"
 #include "RenderDepth.h"
 #include "VulkanCommandBuffer.h"
 #include "VulkanSwapChain.h"
@@ -43,7 +44,6 @@ int main() {
   core::vulkan::VulkanCommandBuffer command_buffer(&context);
   core::vulkan::VulkanFence fence(&context);
   core::vulkan::VulkanSemaphore image_available_semaphore(&context);
-  std::vector<std::unique_ptr<core::vulkan::VulkanSemaphore>> render_finished_semaphores;
   core::vulkan::VulkanFence in_flight_fence(&context);
   core::vulkan::VulkanRenderPass render_pass(&context, swap_chain->swapchain_image_format,
                                              kEnableDepthBuffer);  // enable depth buffer
@@ -53,22 +53,30 @@ int main() {
       VkClearValue{.color = {.float32 = {0.0f, 0.0f, 0.0f, 1.0f}}},
       VkClearValue{.depthStencil = {.depth = 1.0f, .stencil = 0}},
   };
-  for (size_t i = 0; i < swap_chain->swapchain_images.size(); ++i) {
-    render_finished_semaphores.push_back(std::make_unique<core::vulkan::VulkanSemaphore>(&context));
-  }
 
   texture->Init("examples/data/core.png");
   swap_chain->CreateFrameBuffers(render_pass);
+
+  core::GlfwSwapChainResizer resizer(window, swap_chain.get());
+  const auto recreate_swap_chain = [&]() {
+    if (resizer.Recreate()) {
+      swap_chain->CreateFrameBuffers(render_pass);
+    }
+  };
 
   while (!glfwWindowShouldClose(window)) {
     glfwPollEvents();
 
     vkWaitForFences(context.logical_device, 1, &(in_flight_fence.fence), VK_TRUE, UINT64_MAX);
-    in_flight_fence.Reset();
 
-    uint32_t image_index;
-    vkAcquireNextImageKHR(context.logical_device, swap_chain->swapchain, UINT64_MAX,
-                          image_available_semaphore.semaphore, VK_NULL_HANDLE, &image_index);
+    uint32_t image_index = 0;
+    const VkResult acquire_result =
+        resizer.AcquireNextImage(image_available_semaphore.semaphore, &image_index);
+    if (acquire_result == VK_ERROR_OUT_OF_DATE_KHR) {
+      recreate_swap_chain();
+      continue;
+    }
+    in_flight_fence.Reset();
     texture->UpdateUniformBuffer(swap_chain->swapchain_extent.width,
                                  swap_chain->swapchain_extent.height);
     command_buffer.BeginCommandBufferWithReset();
@@ -89,13 +97,13 @@ int main() {
         core::vulkan::SubmitSyncInfo{
             .wait_semaphores = {image_available_semaphore.semaphore},
             .wait_stage_masks = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT},
-            .signal_semaphores = {render_finished_semaphores[image_index]->semaphore},
+            .signal_semaphores = {swap_chain->PresentSemaphore(image_index)},
         });
 
     const VkResult present_result =
-        swap_chain->Present(image_index, render_finished_semaphores[image_index]->semaphore);
-    if (present_result != VK_SUCCESS && present_result != VK_SUBOPTIMAL_KHR) {
-      VK_CHECK(present_result);
+        swap_chain->Present(image_index, swap_chain->PresentSemaphore(image_index));
+    if (resizer.NeedsRecreate(acquire_result, present_result)) {
+      recreate_swap_chain();
     }
   }
   vkDeviceWaitIdle(context.logical_device);
