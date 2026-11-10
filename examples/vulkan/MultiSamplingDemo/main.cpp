@@ -4,6 +4,7 @@
 #include <backends/imgui_impl_vulkan.h>
 #include <imgui.h>
 
+#include "GlfwSwapChainResizer.h"
 #include "RenderModel.h"
 #include "VulkanCamera.h"
 #include "VulkanCommandBuffer.h"
@@ -104,11 +105,6 @@ int main() {
   core::vulkan::VulkanDynamicRendering dynamic_rendering(&context);
   core::vulkan::VulkanFence fence(&context);
   core::vulkan::VulkanSemaphore image_available_semaphore(&context);
-  // One render-finished (present) semaphore per swapchain image. A binary
-  // semaphore used for presentation cannot be reused until its image is
-  // re-acquired, so indexing by image avoids the swapchain semaphore-reuse
-  // validation error.
-  std::vector<std::unique_ptr<core::vulkan::VulkanSemaphore>> render_finished_semaphores;
   core::vulkan::VulkanFence in_flight_fence(&context);
 
   // Dynamic rendering
@@ -126,12 +122,24 @@ int main() {
   const VkClearValue depth_clear_value{
       .depthStencil = {.depth = 1.0f, .stencil = 0},
   };
-  for (size_t i = 0; i < swap_chain->swapchain_image_views.size(); ++i) {
-    render_finished_semaphores.push_back(std::make_unique<core::vulkan::VulkanSemaphore>(&context));
-  }
 
   model->Init(kTexturePath, kModelPath, swap_chain->swapchain_extent,
               swap_chain->swapchain_image_format);
+
+  core::GlfwSwapChainResizer resizer(window, swap_chain.get());
+  const auto recreate_swap_chain = [&]() {
+    if (resizer.Recreate()) {
+      depth_image = core::vulkan::VulkanImage(
+          &context, swap_chain->swapchain_extent.width, swap_chain->swapchain_extent.height,
+          kDepthFormat, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_IMAGE_ASPECT_DEPTH_BIT,
+          VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VK_IMAGE_TILING_OPTIMAL, 1, msaa_samples);
+      depth_image.TransitionDepthImageLayout(
+          VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, kDepthFormat);
+      if (multisampling_enabled) {
+        model->CreateMSAAImage(swap_chain->swapchain_extent, swap_chain->swapchain_image_format);
+      }
+    }
+  };
 
   while (!glfwWindowShouldClose(window)) {
     glfwPollEvents();
@@ -150,11 +158,15 @@ int main() {
     ImGui::Render();
 
     vkWaitForFences(context.logical_device, 1, &(in_flight_fence.fence), VK_TRUE, UINT64_MAX);
-    in_flight_fence.Reset();
 
-    uint32_t image_index;
-    vkAcquireNextImageKHR(context.logical_device, swap_chain->swapchain, UINT64_MAX,
-                          image_available_semaphore.semaphore, VK_NULL_HANDLE, &image_index);
+    uint32_t image_index = 0;
+    const VkResult acquire_result =
+        resizer.AcquireNextImage(image_available_semaphore.semaphore, &image_index);
+    if (acquire_result == VK_ERROR_OUT_OF_DATE_KHR) {
+      recreate_swap_chain();
+      continue;
+    }
+    in_flight_fence.Reset();
     const auto camera_view = camera->GetViewMatrix();
     model->UpdateUniformBuffer(swap_chain->swapchain_extent.width,
                                swap_chain->swapchain_extent.height, camera_view, model_rotation);
@@ -182,12 +194,12 @@ int main() {
         core::vulkan::SubmitSyncInfo{
             .wait_semaphores = {image_available_semaphore.semaphore},
             .wait_stage_masks = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT},
-            .signal_semaphores = {render_finished_semaphores[image_index]->semaphore},
+            .signal_semaphores = {swap_chain->PresentSemaphore(image_index)},
         });
     const VkResult present_result =
-        swap_chain->Present(image_index, render_finished_semaphores[image_index]->semaphore);
-    if (present_result != VK_SUCCESS && present_result != VK_SUBOPTIMAL_KHR) {
-      VK_CHECK(present_result);
+        swap_chain->Present(image_index, swap_chain->PresentSemaphore(image_index));
+    if (resizer.NeedsRecreate(acquire_result, present_result)) {
+      recreate_swap_chain();
     }
   }
   vkDeviceWaitIdle(context.logical_device);

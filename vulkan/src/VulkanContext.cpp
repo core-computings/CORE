@@ -150,6 +150,9 @@ void VulkanContext::CreateInstance(const bool enable_validation_layers) {
   }
 
   extensions.emplace_back("VK_KHR_surface");
+#if defined(__ANDROID__)
+  extensions.emplace_back("VK_KHR_android_surface");
+#endif
 
 #ifdef __APPLE__
   extensions.emplace_back("VK_KHR_portability_enumeration");

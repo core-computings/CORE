@@ -43,6 +43,8 @@ class RenderModel : public core::vulkan::VulkanRender {
   void UpdateUniformBuffer(const int width, const int height, const glm::mat4& view_matrix,
                            const float rotation);
 
+  void CreateMSAAImage(const VkExtent2D& extent, VkFormat color_format);
+
   // MSAA image (needs to be accessed by Dynamic rendering)
   core::vulkan::VulkanImage msaa_image;
 
@@ -60,8 +62,6 @@ class RenderModel : public core::vulkan::VulkanRender {
 
  private:
   void CreateTextureImage(const std::string& image_path);
-
-  void CreateMSAAImage(const VkExtent2D& extent, VkFormat color_format);
 
   struct UniformBufferObject {
     glm::mat4 model;
