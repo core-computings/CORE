@@ -7,6 +7,8 @@
 
 #include <vulkan/vulkan.h>
 
+#include <atomic>
+#include <cstdint>
 #include <optional>
 #include <set>
 #include <unordered_map>
@@ -55,14 +57,20 @@ class VulkanContext {
   VkQueue graphics_queue() const { return graphics_queue_; }
   VkQueue present_queue() const { return present_queue_; }
   QueueFamilyType queue_family_type() const { return queue_family_type_; }
+  bool validation_layers_enabled() const { return validation_layers_enabled_; }
+  uint32_t validation_error_count() const { return validation_error_count_.load(); }
+
+  static uint64_t TotalValidationErrorCount();
 
   VkInstance instance = VK_NULL_HANDLE;
-  VkDevice logical_device;
-  VkPhysicalDevice physical_device;
+  VkDevice logical_device = VK_NULL_HANDLE;
+  VkPhysicalDevice physical_device = VK_NULL_HANDLE;
   float timestamp_period;
 
  private:
   bool enable_validation_layers_;
+  bool validation_layers_enabled_ = false;
+  std::atomic<uint32_t> validation_error_count_{0};
   QueueFamilyType queue_family_type_;
   QueueFamilyIndices queue_family_indices_;
   VkQueue compute_queue_ = VK_NULL_HANDLE;
@@ -70,7 +78,13 @@ class VulkanContext {
   VkQueue present_queue_ = VK_NULL_HANDLE;
   VkSurfaceKHR surface_ = VK_NULL_HANDLE;
 
-  VkDebugUtilsMessengerEXT debug_messenger_;
+  VkDebugUtilsMessengerEXT debug_messenger_ = VK_NULL_HANDLE;
+
+  static VKAPI_ATTR VkBool32 VKAPI_CALL
+  DebugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT message_severity,
+                VkDebugUtilsMessageTypeFlagsEXT message_type,
+                const VkDebugUtilsMessengerCallbackDataEXT* callback_data, void* user_data);
+  VkDebugUtilsMessengerCreateInfoEXT DebugMessengerCreateInfo();
 
   bool CheckValidationLayerSupport();
   void CreateInstance(const bool enable_validation_layers);
