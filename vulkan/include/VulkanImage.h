@@ -38,6 +38,8 @@ class VulkanImage {
 
   void GenerateMipmaps(VkCommandBuffer command_buffer);
 
+  VkMemoryPropertyFlags memory_properties() const { return memory_properties_; }
+
   // void CreateTextureImage(const std::string& image_path);
 
  private:
@@ -48,6 +50,7 @@ class VulkanImage {
   VkSampleCountFlagBits samples_ = VK_SAMPLE_COUNT_1_BIT;
   VkImageTiling tiling_ = VK_IMAGE_TILING_OPTIMAL;
   VkImageUsageFlags usage_ = 0;
+  VkMemoryPropertyFlags memory_properties_ = 0;
 
  public:
   uint32_t image_width;

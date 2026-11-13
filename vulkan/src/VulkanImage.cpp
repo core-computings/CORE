@@ -44,11 +44,29 @@ VulkanImage::VulkanImage(VulkanContext* context, const uint32_t width, const uin
   VkMemoryRequirements mem_requirements;
   vkGetImageMemoryRequirements(context_->logical_device, image, &mem_requirements);
 
+  VkPhysicalDeviceMemoryProperties device_memory{};
+  vkGetPhysicalDeviceMemoryProperties(context_->physical_device, &device_memory);
+  uint32_t memory_type_index = device_memory.memoryTypeCount;
+  if ((usage & VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT) != 0U) {
+    const VkMemoryPropertyFlags lazy_properties =
+        properties | VK_MEMORY_PROPERTY_LAZILY_ALLOCATED_BIT;
+    for (uint32_t i = 0; i < device_memory.memoryTypeCount; ++i) {
+      if ((mem_requirements.memoryTypeBits & (1U << i)) != 0U &&
+          (device_memory.memoryTypes[i].propertyFlags & lazy_properties) == lazy_properties) {
+        memory_type_index = i;
+        break;
+      }
+    }
+  }
+  if (memory_type_index == device_memory.memoryTypeCount) {
+    memory_type_index = context_->FindMemoryType(mem_requirements.memoryTypeBits, properties);
+  }
+  memory_properties_ = device_memory.memoryTypes[memory_type_index].propertyFlags;
+
   VkMemoryAllocateInfo alloc_info{};
   alloc_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
   alloc_info.allocationSize = mem_requirements.size;
-  alloc_info.memoryTypeIndex =
-      context_->FindMemoryType(mem_requirements.memoryTypeBits, properties);
+  alloc_info.memoryTypeIndex = memory_type_index;
 
   VK_CHECK(vkAllocateMemory(context_->logical_device, &alloc_info, nullptr, &image_memory));
 
@@ -114,6 +132,7 @@ VulkanImage& VulkanImage::operator=(VulkanImage&& rhs) {
   samples_ = rhs.samples_;
   tiling_ = rhs.tiling_;
   usage_ = rhs.usage_;
+  memory_properties_ = rhs.memory_properties_;
 
   image = rhs.image;
   rhs.image = VK_NULL_HANDLE;
