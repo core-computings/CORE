@@ -1,5 +1,8 @@
 #include "VulkanRender.h"
 
+#include <cmath>
+#include <stdexcept>
+
 namespace core {
 namespace vulkan {
 
@@ -15,9 +18,40 @@ VulkanRender::VulkanRender(VulkanContext* context,
       msaa_samples_(msaa_samples) {}
 
 void VulkanRender::CreatePipeline() {
+  const bool has_color_attachment =
+      render_pass_ != nullptr || !dynamic_rendering_info_.color_formats.empty();
+  if (render_pass_ == nullptr) {
+    if (dynamic_rendering_info_.color_formats.size() > 1) {
+      throw std::runtime_error("Dynamic rendering currently supports at most one color format");
+    }
+    if (!has_color_attachment && dynamic_rendering_info_.depth_format == VK_FORMAT_UNDEFINED &&
+        dynamic_rendering_info_.stencil_format == VK_FORMAT_UNDEFINED) {
+      throw std::invalid_argument("Dynamic rendering requires a color, depth or stencil format");
+    }
+  }
+
+  const std::optional<DepthBiasInfo> depth_bias = SetDepthBias();
+  if (depth_bias.has_value() &&
+      (!std::isfinite(depth_bias->constant_factor) || !std::isfinite(depth_bias->slope_factor))) {
+    throw std::invalid_argument("Depth bias factors must be finite");
+  }
+
+  const std::vector<uint32_t> vertex_shader_code = LoadVertexShader();
+  const std::vector<uint32_t> fragment_shader_code = LoadFragmentShader();
+  if (vertex_shader_code.empty()) {
+    throw std::invalid_argument("Graphics pipelines require a vertex shader");
+  }
+  if (fragment_shader_code.empty() && has_color_attachment) {
+    throw std::invalid_argument(
+        "Only pipelines without color attachments may omit fragment shaders");
+  }
+
   // 1. shader stage
-  const auto vertex_shader_module = CreateShaderModule(LoadVertexShader());
-  const auto fragment_shader_module = CreateShaderModule(LoadFragmentShader());
+  const VkShaderModule vertex_shader_module = CreateShaderModule(vertex_shader_code);
+  VkShaderModule fragment_shader_module = VK_NULL_HANDLE;
+  if (!fragment_shader_code.empty()) {
+    fragment_shader_module = CreateShaderModule(fragment_shader_code);
+  }
 
   VkPipelineShaderStageCreateInfo vert_info{};
   vert_info.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
@@ -31,7 +65,10 @@ void VulkanRender::CreatePipeline() {
   frag_info.module = fragment_shader_module;
   frag_info.pName = "main";
 
-  std::vector<VkPipelineShaderStageCreateInfo> shader_stages = {vert_info, frag_info};
+  std::vector<VkPipelineShaderStageCreateInfo> shader_stages = {vert_info};
+  if (fragment_shader_module != VK_NULL_HANDLE) {
+    shader_stages.push_back(frag_info);
+  }
 
   // 2. vertex input state
   const auto vertex_bindings = GetVertexBindingDescriptions();
@@ -80,10 +117,11 @@ void VulkanRender::CreatePipeline() {
   rasterize_state.cullMode = SetCullMode();
   rasterize_state.frontFace = SetFrontFace();
 
-  rasterize_state.depthBiasEnable = VK_FALSE;
-  rasterize_state.depthBiasConstantFactor = 0.0f;
+  rasterize_state.depthBiasEnable = depth_bias.has_value() ? VK_TRUE : VK_FALSE;
+  rasterize_state.depthBiasConstantFactor =
+      depth_bias.has_value() ? depth_bias->constant_factor : 0.0f;
   rasterize_state.depthBiasClamp = 0.0f;
-  rasterize_state.depthBiasSlopeFactor = 0.0f;
+  rasterize_state.depthBiasSlopeFactor = depth_bias.has_value() ? depth_bias->slope_factor : 0.0f;
 
   // 6. multisample state
   VkPipelineMultisampleStateCreateInfo multisample_state{};
@@ -123,8 +161,8 @@ void VulkanRender::CreatePipeline() {
   color_blending_state.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
   color_blending_state.logicOpEnable = VK_FALSE;
   color_blending_state.logicOp = VK_LOGIC_OP_COPY;
-  color_blending_state.attachmentCount = 1;
-  color_blending_state.pAttachments = &color_blend_attachment;
+  color_blending_state.attachmentCount = has_color_attachment ? 1 : 0;
+  color_blending_state.pAttachments = has_color_attachment ? &color_blend_attachment : nullptr;
   color_blending_state.blendConstants[0] = 0.0f;
   color_blending_state.blendConstants[1] = 0.0f;
   color_blending_state.blendConstants[2] = 0.0f;
@@ -155,19 +193,13 @@ void VulkanRender::CreatePipeline() {
     pipeline_info.subpass = 0;
   } else {
     // Dynamic rendering path
-    if (dynamic_rendering_info_.color_formats.empty()) {
-      throw std::runtime_error("Dynamic rendering requires at least one color format");
-    }
-
-    if (dynamic_rendering_info_.color_formats.size() != 1) {
-      throw std::runtime_error("Dynamic rendering currently supports exactly one color format");
-    }
-
     rendering_ci.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
     rendering_ci.pNext = nullptr;
     rendering_ci.viewMask = 0;
-    rendering_ci.colorAttachmentCount = 1;
-    rendering_ci.pColorAttachmentFormats = dynamic_rendering_info_.color_formats.data();
+    rendering_ci.colorAttachmentCount =
+        static_cast<uint32_t>(dynamic_rendering_info_.color_formats.size());
+    rendering_ci.pColorAttachmentFormats =
+        has_color_attachment ? dynamic_rendering_info_.color_formats.data() : nullptr;
     rendering_ci.depthAttachmentFormat = dynamic_rendering_info_.depth_format;
     rendering_ci.stencilAttachmentFormat = dynamic_rendering_info_.stencil_format;
 

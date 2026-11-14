@@ -24,10 +24,11 @@ class RenderGround : public core::vulkan::VulkanRender {
                const core::vulkan::DynamicRenderingInfo& dynamic_rendering_info);
 
   void Init() override;
-  void Init(const std::string& texture_path);
+  void Init(const std::string& texture_path, VkImageView shadow_map_view, VkSampler shadow_sampler);
   void Render(VkCommandBuffer command_buffer, VkExtent2D extent);
 
-  void UpdateUniformBuffer(const glm::mat4& view, const glm::mat4& project);
+  void UpdateUniformBuffer(const glm::mat4& view, const glm::mat4& project,
+                           const glm::mat4& light_view_projection);
 
  protected:
   VkCullModeFlags SetCullMode() const override { return VK_CULL_MODE_NONE; }
@@ -45,6 +46,7 @@ class RenderGround : public core::vulkan::VulkanRender {
   struct UniformBufferObject {
     glm::mat4 view;
     glm::mat4 project;
+    glm::mat4 light_view_projection;
   };
 
   void CreateTextureImage(const std::string& texture_path);
@@ -67,6 +69,8 @@ class RenderGround : public core::vulkan::VulkanRender {
 
   core::vulkan::VulkanImage texture_image_;
   core::vulkan::VulkanSampler sampler_;
+  VkImageView shadow_map_view_ = VK_NULL_HANDLE;
+  VkSampler shadow_sampler_ = VK_NULL_HANDLE;
 };
 
 }  // namespace core

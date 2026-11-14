@@ -25,6 +25,11 @@ class RenderCar : public core::vulkan::VulkanRender {
 
   void UpdateUniformBuffer(const glm::mat4& model, const glm::mat4& view, const glm::mat4& project);
 
+  const core::vulkan::VulkanBuffer& vertex_buffer() const { return vertex_buffer_local_; }
+  const core::vulkan::VulkanBuffer& index_buffer() const { return index_buffer_local_; }
+  uint32_t index_count() const { return static_cast<uint32_t>(indices_.size()); }
+  static constexpr uint32_t kVertexStride = 9 * sizeof(float);
+
  protected:
   VkCullModeFlags SetCullMode() const override { return VK_CULL_MODE_BACK_BIT; }
   VkFrontFace SetFrontFace() const override { return VK_FRONT_FACE_COUNTER_CLOCKWISE; }
