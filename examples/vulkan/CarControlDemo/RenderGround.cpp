@@ -18,6 +18,7 @@ void RenderGround::Init() {
 
   CreateUniformBufferDescriptorSet(0, uniform_buffer_);
   CreateCombinedImageSamplerDescriptorSet(1, texture_image_.image_view, sampler_.sampler);
+  CreateCombinedImageSamplerDescriptorSet(2, shadow_map_view_, shadow_sampler_);
   vkUpdateDescriptorSets(context_->logical_device, writes_.size(), writes_.data(), 0, nullptr);
 
   vertex_buffer_staging_.MapData([this](void* data) {
@@ -29,12 +30,20 @@ void RenderGround::Init() {
   index_buffer_staging_.CopyToBuffer(index_buffer_local_);
 
   uniform_buffer_.MapData([](void* data) {
-    UniformBufferObject init{glm::mat4(1.0f), glm::mat4(1.0f)};
+    UniformBufferObject init{.view = glm::mat4(1.0f),
+                             .project = glm::mat4(1.0f),
+                             .light_view_projection = glm::mat4(1.0f)};
     memcpy(data, &init, sizeof(UniformBufferObject));
   });
 }
 
-void RenderGround::Init(const std::string& texture_path) {
+void RenderGround::Init(const std::string& texture_path, VkImageView shadow_map_view,
+                        VkSampler shadow_sampler) {
+  if (shadow_map_view == VK_NULL_HANDLE || shadow_sampler == VK_NULL_HANDLE) {
+    throw std::invalid_argument("Ground rendering requires a shadow map and sampler");
+  }
+  shadow_map_view_ = shadow_map_view;
+  shadow_sampler_ = shadow_sampler;
   CreateTextureImage(texture_path);
   CreateBuffers();
   Init();
@@ -66,9 +75,11 @@ void RenderGround::Render(VkCommandBuffer command_buffer, VkExtent2D extent) {
   vkCmdDrawIndexed(command_buffer, static_cast<uint32_t>(indices_.size()), 1, 0, 0, 0);
 }
 
-void RenderGround::UpdateUniformBuffer(const glm::mat4& view, const glm::mat4& project) {
+void RenderGround::UpdateUniformBuffer(const glm::mat4& view, const glm::mat4& project,
+                                       const glm::mat4& light_view_projection) {
   uniform_buffer_.MapData([&](void* data) {
-    UniformBufferObject ubo{view, project};
+    UniformBufferObject ubo{
+        .view = view, .project = project, .light_view_projection = light_view_projection};
     ubo.project[1][1] *= -1;  // Vulkan Y-flip
     memcpy(data, &ubo, sizeof(UniformBufferObject));
   });
@@ -76,7 +87,10 @@ void RenderGround::UpdateUniformBuffer(const glm::mat4& view, const glm::mat4& p
 
 std::vector<core::vulkan::BindingInfo> RenderGround::GetBindingInfo() const {
   return {{0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_VERTEX_BIT},
-          {1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT}};
+          {1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT},
+          {.binding = 2,
+           .descriptor_type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+           .shader_stage = VK_SHADER_STAGE_FRAGMENT_BIT}};
 }
 
 const std::vector<uint32_t> RenderGround::LoadVertexShader() const {

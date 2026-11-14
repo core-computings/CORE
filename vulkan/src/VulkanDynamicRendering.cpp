@@ -1,5 +1,7 @@
 #include "VulkanDynamicRendering.h"
 
+#include <stdexcept>
+
 #include "VulkanUtils.h"
 
 namespace core {
@@ -62,6 +64,43 @@ void VulkanDynamicRendering::BeginDynamicRendering(VkCommandBuffer command_buffe
   rendering_info.pDepthAttachment =
       depth_image_view == VK_NULL_HANDLE ? nullptr : &depth_attachment;
 
+  vk_cmd_begin_rendering_(command_buffer, &rendering_info);
+}
+
+void VulkanDynamicRendering::BeginDepthRendering(VkCommandBuffer command_buffer,
+                                                 VkImageView depth_image_view, VkExtent2D extent,
+                                                 VkClearValue depth_clear_value) const {
+  if (command_buffer == VK_NULL_HANDLE || depth_image_view == VK_NULL_HANDLE) {
+    throw std::invalid_argument("Depth rendering requires a command buffer and depth image view");
+  }
+  if (extent.width == 0 || extent.height == 0) {
+    throw std::invalid_argument("Depth rendering requires a non-empty extent");
+  }
+
+  const VkRenderingAttachmentInfo depth_attachment{
+      .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+      .pNext = nullptr,
+      .imageView = depth_image_view,
+      .imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+      .resolveMode = VK_RESOLVE_MODE_NONE,
+      .resolveImageView = VK_NULL_HANDLE,
+      .resolveImageLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+      .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+      .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+      .clearValue = depth_clear_value,
+  };
+  const VkRenderingInfo rendering_info{
+      .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
+      .pNext = nullptr,
+      .flags = 0,
+      .renderArea = {.offset = {.x = 0, .y = 0}, .extent = extent},
+      .layerCount = 1,
+      .viewMask = 0,
+      .colorAttachmentCount = 0,
+      .pColorAttachments = nullptr,
+      .pDepthAttachment = &depth_attachment,
+      .pStencilAttachment = nullptr,
+  };
   vk_cmd_begin_rendering_(command_buffer, &rendering_info);
 }
 

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <optional>
 #include <vector>
 
 #include "VulkanBase.h"
@@ -17,6 +18,11 @@ struct DynamicRenderingInfo {
   VkFormat stencil_format = VK_FORMAT_UNDEFINED;
 };
 
+struct DepthBiasInfo {
+  float constant_factor = 0.0f;
+  float slope_factor = 0.0f;
+};
+
 class VulkanRender : public VulkanBase {
  public:
   VulkanRender(VulkanContext* context, VulkanRenderPass* render_pass);
@@ -32,6 +38,7 @@ class VulkanRender : public VulkanBase {
   virtual VkFrontFace SetFrontFace() const { return VK_FRONT_FACE_CLOCKWISE; }
   virtual VkBool32 SetDepthTesting() const { return VK_FALSE; }
   virtual VkBool32 SetDepthWriting() const { return VK_FALSE; }
+  virtual std::optional<DepthBiasInfo> SetDepthBias() const { return std::nullopt; }
   virtual VkPipelineColorBlendAttachmentState SetColorBlendAttachment() const {
     VkPipelineColorBlendAttachmentState s{};
     s.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |

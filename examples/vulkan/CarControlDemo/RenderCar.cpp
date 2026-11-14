@@ -87,7 +87,8 @@ const std::vector<uint32_t> RenderCar::LoadFragmentShader() const {
 std::vector<VkVertexInputBindingDescription> RenderCar::GetVertexBindingDescriptions() const {
   VkVertexInputBindingDescription b{};
   b.binding = 0;
-  b.stride = sizeof(Vertex);
+  static_assert(sizeof(Vertex) == kVertexStride);
+  b.stride = kVertexStride;
   b.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
   return {b};
 }

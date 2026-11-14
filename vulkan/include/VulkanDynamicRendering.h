@@ -19,6 +19,8 @@ class VulkanDynamicRendering {
                              VkClearValue clear_value,
                              VkImageView depth_image_view = VK_NULL_HANDLE,
                              VkClearValue depth_clear_value = {}) const;
+  void BeginDepthRendering(VkCommandBuffer command_buffer, VkImageView depth_image_view,
+                           VkExtent2D extent, VkClearValue depth_clear_value) const;
   void EndDynamicRendering(VkCommandBuffer command_buffer) const;
 
  private:

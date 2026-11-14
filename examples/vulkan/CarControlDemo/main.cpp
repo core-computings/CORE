@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "RenderCar.h"
+#include "RenderCarShadow.h"
 #include "RenderGround.h"
 #include "RenderSkybox.h"
 #include "VulkanCommandBuffer.h"
@@ -42,6 +43,11 @@ const std::array<std::string, 6> kSkyboxFacePaths = {
 constexpr float kDriveSpeed = 8.0f;                // world units per second
 constexpr float kTurnRate = glm::radians(110.0f);  // radians per second while driving
 constexpr float kMouseSensitivity = 0.15f;
+
+constexpr uint32_t kShadowMapSize = 2048;
+constexpr float kShadowHalfExtent = 7.0f;
+constexpr float kLightDistance = 20.0f;
+const glm::vec3 kDirectionToLight = glm::normalize(glm::vec3(0.4f, 0.85f, 0.3f));
 
 // Camera orbit parameters.
 constexpr float kCameraDistance = 12.0f;
@@ -109,6 +115,7 @@ int main() {
   auto skybox = std::make_unique<core::RenderSkybox>(&context, dynamic_rendering_info);
   auto ground = std::make_unique<core::RenderGround>(&context, dynamic_rendering_info);
   auto car = std::make_unique<core::RenderCar>(&context, dynamic_rendering_info);
+  auto car_shadow = std::make_unique<core::RenderCarShadow>(&context, kDepthFormat, kShadowMapSize);
   const VkClearValue color_clear_value{
       .color =
           {
@@ -127,8 +134,9 @@ int main() {
   }
 
   skybox->Init(kSkyboxFacePaths);
-  ground->Init(kGroundTexturePath);
   car->Init();
+  car_shadow->Init();
+  ground->Init(kGroundTexturePath, car_shadow->shadow_map_view(), car_shadow->shadow_sampler());
 
   auto last_time = std::chrono::high_resolution_clock::now();
 
@@ -180,6 +188,13 @@ int main() {
     glm::mat4 model = glm::translate(glm::mat4(1.0f), car_pos);
     model = glm::rotate(model, car_yaw, glm::vec3(0.0f, 1.0f, 0.0f));
 
+    const glm::mat4 light_view = glm::lookAt(car_pos + kDirectionToLight * kLightDistance, car_pos,
+                                             glm::vec3(0.0f, 1.0f, 0.0f));
+    const glm::mat4 light_view_projection =
+        glm::orthoRH_ZO(-kShadowHalfExtent, kShadowHalfExtent, -kShadowHalfExtent,
+                        kShadowHalfExtent, 0.1f, 2.0f * kLightDistance) *
+        light_view;
+
     vkWaitForFences(context.logical_device, 1, &(in_flight_fence.fence), VK_TRUE, UINT64_MAX);
     in_flight_fence.Reset();
 
@@ -188,10 +203,12 @@ int main() {
                           image_available_semaphore.semaphore, VK_NULL_HANDLE, &image_index);
 
     skybox->UpdateUniformBuffer(view, project);
-    ground->UpdateUniformBuffer(view, project);
+    ground->UpdateUniformBuffer(view, project, light_view_projection);
     car->UpdateUniformBuffer(model, view, project);
 
     command_buffer.BeginCommandBufferWithReset();
+
+    car_shadow->Record(command_buffer.buffer(), *car, light_view_projection * model);
 
     swap_chain->TransitionImageLayout(command_buffer.buffer(), image_index,
                                       VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
