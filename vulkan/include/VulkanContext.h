@@ -28,6 +28,11 @@ struct QueueFamilyIndices {
   }
 };
 
+struct Float16Support {
+  bool arithmetic = false;
+  bool storage_buffer = false;
+};
+
 /*
 Vulkan context manages:
 1. instance
@@ -55,6 +60,7 @@ class VulkanContext {
   VkQueue graphics_queue() const { return graphics_queue_; }
   VkQueue present_queue() const { return present_queue_; }
   QueueFamilyType queue_family_type() const { return queue_family_type_; }
+  const Float16Support& float16_support() const { return float16_support_; }
 
   VkInstance instance = VK_NULL_HANDLE;
   VkDevice logical_device;
@@ -69,6 +75,7 @@ class VulkanContext {
   VkQueue graphics_queue_ = VK_NULL_HANDLE;
   VkQueue present_queue_ = VK_NULL_HANDLE;
   VkSurfaceKHR surface_ = VK_NULL_HANDLE;
+  Float16Support float16_support_;
 
   VkDebugUtilsMessengerEXT debug_messenger_;
 

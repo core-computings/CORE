@@ -32,6 +32,14 @@ double TimeDispatchMs(core::vulkan::VulkanContext& context,
   query_pool.Query(command_buffer.buffer(), 0, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT);
   record(command_buffer.buffer());
   query_pool.Query(command_buffer.buffer(), 1, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT);
+  const VkMemoryBarrier host_barrier{
+      .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+      .pNext = nullptr,
+      .srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
+      .dstAccessMask = VK_ACCESS_HOST_READ_BIT,
+  };
+  vkCmdPipelineBarrier(command_buffer.buffer(), VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                       VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &host_barrier, 0, nullptr, 0, nullptr);
 
   VkSubmitInfo submit_info{};
   command_buffer.Submit(fence.fence, submit_info);
@@ -88,6 +96,25 @@ TEST(Roofline, RidgePoint) {
   fma_dst.MapData([&fma_sample](void* data) { memcpy(&fma_sample, data, sizeof(float)); });
   EXPECT_TRUE(std::isfinite(fma_sample));
 
+  double fma16_ms = 0.0;
+  double peak_fp16_gflops = 0.0;
+  if (context.float16_support().arithmetic) {
+    auto fma16 = std::make_unique<core::vulkan::ComputeFma>(
+        &context, fma_dst, kFmaIterations, kFmaGroups, core::vulkan::FmaPrecision::kFloat16);
+    fma16->Init();
+    fma16_ms = std::numeric_limits<double>::max();
+    for (int run = 0; run < kRuns; ++run) {
+      fma16_ms = std::min(fma16_ms, TimeDispatchMs(context, command_buffer, fence, query_pool,
+                                                   [&](VkCommandBuffer cmd) { fma16->Run(cmd); }));
+    }
+    peak_fp16_gflops = static_cast<double>(kFmaThreads) * kFmaIterations *
+                       static_cast<double>(fma16->FlopPerIteration()) / (fma16_ms * 1e6);
+    float fma16_sample = 0.0f;
+    fma_dst.MapData([&fma16_sample](void* data) { memcpy(&fma16_sample, data, sizeof(float)); });
+    EXPECT_NEAR(fma16_sample, 4.0f, 0.01f);
+    EXPECT_GT(peak_fp16_gflops, 0.0);
+  }
+
   // ---- Peak memory bandwidth: streaming vec4 copy ----
   // 8M vec4 = 128 MiB per buffer, far larger than the GPU's caches.
   constexpr int kCopyCount = 8 * 1024 * 1024;
@@ -142,6 +169,10 @@ TEST(Roofline, RidgePoint) {
 
   printf("Peak compute throughput: %.1f GFLOP/s (fp32, best of %d runs, %.3f ms)\n", peak_gflops,
          kRuns, fma_ms);
+  if (peak_fp16_gflops > 0.0) {
+    printf("Peak fp16 throughput   : %.1f GFLOP/s (best of %d runs, %.3f ms)\n", peak_fp16_gflops,
+           kRuns, fma16_ms);
+  }
   printf("Peak memory bandwidth  : %.1f GB/s (best of %d runs, %.3f ms)\n", peak_gbps, kRuns,
          copy_ms);
   printf("Ridge point            : %.1f FLOP/byte\n", ridge_point);
