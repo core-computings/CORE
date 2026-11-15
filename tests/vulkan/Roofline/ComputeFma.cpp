@@ -1,18 +1,28 @@
 #include "ComputeFma.h"
 
 #include <cstring>
+#include <stdexcept>
 
 namespace core {
 namespace vulkan {
 
 ComputeFma::ComputeFma(VulkanContext* context, VulkanBuffer& dst, const int iterations,
-                       const uint32_t group_count)
+                       const uint32_t group_count, const FmaPrecision precision)
     : VulkanCompute(context),
       dst_buffer_(dst),
       uniform_buffer_(context, sizeof(UniformData), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT),
       uniform_data_{.iterations = iterations},
-      group_count_(group_count) {}
+      group_count_(group_count),
+      precision_(precision) {
+  if (precision_ == FmaPrecision::kFloat16 && !context->float16_support().arithmetic) {
+    throw std::invalid_argument("Float16 arithmetic is not supported");
+  }
+}
+
+uint64_t ComputeFma::FlopPerIteration() const {
+  return precision_ == FmaPrecision::kFloat16 ? kFloat16FlopPerIteration : kFlopPerIteration;
+}
 
 void ComputeFma::Init() {
   VulkanCompute::Init();
@@ -42,7 +52,10 @@ const std::vector<uint32_t>& ComputeFma::LoadShaderCode() const {
   static const std::vector<uint32_t> shader_code =
 #include "ComputeFma.comp.spv"
       ;
-  return shader_code;
+  static const std::vector<uint32_t> float16_shader_code =
+#include "ComputeFma16.comp.spv"
+      ;
+  return precision_ == FmaPrecision::kFloat16 ? float16_shader_code : shader_code;
 }
 
 }  // namespace vulkan

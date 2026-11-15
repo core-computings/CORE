@@ -1,0 +1,67 @@
+#version 450
+#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
+
+layout(binding = 0) uniform UniformBufferObject {
+    int iterations;
+}
+ubo;
+
+layout(std430, binding = 1) writeonly buffer dst_out { float dst[]; };
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+void main() {
+    const uint gid = gl_GlobalInvocationID.x;
+
+    const float16_t seed = float16_t(float(gid & 63u) * 1e-3 + 0.10);
+    f16vec2 a0 = f16vec2(seed, seed + float16_t(0.01));
+    f16vec2 a1 = a0 + float16_t(0.02);
+    f16vec2 a2 = a0 + float16_t(0.04);
+    f16vec2 a3 = a0 + float16_t(0.06);
+    f16vec2 a4 = a0 + float16_t(0.08);
+    f16vec2 a5 = a0 + float16_t(0.10);
+    f16vec2 a6 = a0 + float16_t(0.12);
+    f16vec2 a7 = a0 + float16_t(0.14);
+    const f16vec2 c = f16vec2(float16_t(0.1875));
+
+    for (int i = 0; i < ubo.iterations; ++i) {
+        a0 = a0 * a0 + c;
+        a1 = a1 * a1 + c;
+        a2 = a2 * a2 + c;
+        a3 = a3 * a3 + c;
+        a4 = a4 * a4 + c;
+        a5 = a5 * a5 + c;
+        a6 = a6 * a6 + c;
+        a7 = a7 * a7 + c;
+
+        a0 = a0 * a0 + c;
+        a1 = a1 * a1 + c;
+        a2 = a2 * a2 + c;
+        a3 = a3 * a3 + c;
+        a4 = a4 * a4 + c;
+        a5 = a5 * a5 + c;
+        a6 = a6 * a6 + c;
+        a7 = a7 * a7 + c;
+
+        a0 = a0 * a0 + c;
+        a1 = a1 * a1 + c;
+        a2 = a2 * a2 + c;
+        a3 = a3 * a3 + c;
+        a4 = a4 * a4 + c;
+        a5 = a5 * a5 + c;
+        a6 = a6 * a6 + c;
+        a7 = a7 * a7 + c;
+
+        a0 = a0 * a0 + c;
+        a1 = a1 * a1 + c;
+        a2 = a2 * a2 + c;
+        a3 = a3 * a3 + c;
+        a4 = a4 * a4 + c;
+        a5 = a5 * a5 + c;
+        a6 = a6 * a6 + c;
+        a7 = a7 * a7 + c;
+    }
+
+    const f16vec2 sum = a0 + a1 + a2 + a3 + a4 + a5 + a6 + a7;
+    dst[gid] = float(sum.x) + float(sum.y);
+}

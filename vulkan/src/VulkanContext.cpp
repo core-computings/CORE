@@ -312,8 +312,29 @@ void VulkanContext::CreateLogicalDevice(const float queuePriority) {
     queue_infos.emplace_back(queue_info);
   }
 
+  VkPhysicalDeviceProperties device_properties{};
+  vkGetPhysicalDeviceProperties(physical_device, &device_properties);
+  const bool api_12 = VK_API_VERSION_MAJOR(device_properties.apiVersion) > 1 ||
+                      (VK_API_VERSION_MAJOR(device_properties.apiVersion) == 1 &&
+                       VK_API_VERSION_MINOR(device_properties.apiVersion) >= 2);
+
+  VkPhysicalDeviceShaderFloat16Int8Features float16_features{
+      .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_FLOAT16_INT8_FEATURES,
+      .pNext = nullptr,
+      .shaderFloat16 = VK_FALSE,
+      .shaderInt8 = VK_FALSE,
+  };
+  VkPhysicalDevice16BitStorageFeatures storage16_features{
+      .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_16BIT_STORAGE_FEATURES,
+      .pNext = api_12 ? &float16_features : nullptr,
+      .storageBuffer16BitAccess = VK_FALSE,
+      .uniformAndStorageBuffer16BitAccess = VK_FALSE,
+      .storagePushConstant16 = VK_FALSE,
+      .storageInputOutput16 = VK_FALSE,
+  };
   VkPhysicalDeviceDynamicRenderingFeaturesKHR dyn{};
   dyn.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES_KHR;
+  dyn.pNext = &storage16_features;
   VkPhysicalDeviceFeatures2 features2{};
   features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
   features2.pNext = &dyn;
@@ -322,6 +343,15 @@ void VulkanContext::CreateLogicalDevice(const float queuePriority) {
     throw std::runtime_error("Selected GPU does not support dynamic rendering");
   }
   dyn.dynamicRendering = VK_TRUE;  // enable feature at device creation
+
+  float16_support_ = Float16Support{
+      .arithmetic = float16_features.shaderFloat16 == VK_TRUE,
+      .storage_buffer = storage16_features.storageBuffer16BitAccess == VK_TRUE,
+  };
+  float16_features.shaderInt8 = VK_FALSE;
+  storage16_features.uniformAndStorageBuffer16BitAccess = VK_FALSE;
+  storage16_features.storagePushConstant16 = VK_FALSE;
+  storage16_features.storageInputOutput16 = VK_FALSE;
 
   // TODO: support more queue family types
   VkDeviceCreateInfo device_create_info{};
